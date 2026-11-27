@@ -112,7 +112,7 @@ record ev :: {
   eq      : Tree,  // (self, a, b) -> "True" | "False" | "Stuck" | Err | Refuse
   has_tag : Tree,  // (self, tag, v) -> Bool
   kit     : Kit,   // 7 base-engine capabilities
-  meta    : Tree   // (depth, (sure, (cap, unbox)))
+  meta    : Tree   // (depth, (sure, (cap, (unbox, (rec_ctx, arg_tys)))))
 } -> Eval
 ```
 
@@ -122,7 +122,8 @@ Most assumptions are *monotonic rule extensions*: once installed on `E`, `E.step
 `E.resolve`, `E.eq`, and `E.has_tag` delegate downward via open recursion (`self` always
 points to the outermost evaluator). However, state that *changes on every step* (such as
 remaining split `depth`, whether we are inside a trusted type family `sure`, a countdown
-step `cap`, or active type-unboxing bindings `unbox`) cannot be decremented by rebuilding
+step `cap`, active type-unboxing bindings `unbox`, the active recursive-call argument list
+`rec_ctx`, or quantified argument types `arg_tys`) cannot be decremented by rebuilding
 an inner layer without discarding newer layers stacked above it. Keeping `meta` on the
 outermost `Eval` lets `run_ev` update `cap` or `depth` in place while preserving every
 installed assumption layer.

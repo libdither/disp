@@ -1,5 +1,14 @@
 # Modules as telescope-typed functions
 
+> **Current status (promoted kernel):** The driver mechanisms described here — hermetic
+> per-file scoping, `open given { ... }` / `given` dependency fills, instantiation caching,
+> and guard/license `open`-splice reconciliation — remain live in `src/elab/driver.ts` and
+> `src/elab/modscan.ts`. The promoted evaluator-map kernel (`lib/kernel/surface.disp`) now
+> supplies `given`, `default_guard`, `let`, `guard`, and `check_module` (with verified
+> `.opt.disp` rewrites in `lib/kernel/verified_opt*.disp` and `test/guards.test.ts`). The
+> detailed `cut.disp` / `param_apply` / functor-face notes below reflect the archived
+> `archive/live-kernel/` implementation (still exercised by `test/modules.test.ts`).
+
 Status: slice 1 LANDED (2026-07-06): the given layer (explicit fills,
 instantiation cache, well-typed linking) plus hermetic per-file scoping and
 the kernel fragment headers. The type-theory half was validated first by
