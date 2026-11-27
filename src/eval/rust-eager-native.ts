@@ -20,7 +20,9 @@ import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import type { Session, EvalBackend, SessionOpts, Budget, EvalStats, Classification } from "./types.js"
 
-const ARTIFACT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluators", "rust-eager", "artifacts", "rust_eager.node")
+/// RUST_EAGER_NATIVE_ARTIFACT points at another build (A/B runs without a second checkout).
+const ARTIFACT = process.env.RUST_EAGER_NATIVE_ARTIFACT
+  || join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluators", "rust-eager", "artifacts", "rust_eager.node")
 
 export function rustEagerNativeArtifactPath(): string { return ARTIFACT }
 export function rustEagerNativeAvailable(): boolean { return existsSync(ARTIFACT) }
@@ -40,6 +42,7 @@ interface EagerSessionNative {
   child1(h: number): number
   equal(a: number, b: number, budget: number): number       // 0=false 1=true 2=exhausted
   interactions(): number
+  counters?(): number[]                                     // absent in older addons
   nodeCount(): number
   freeCount(): number
   beginScope(): void
@@ -169,9 +172,16 @@ class RustEagerNativeSession implements Session<number> {
   // Per-item/summary stats are O(1); the predicted-cold walk is deliberately NOT here (it is
   // whole-run) — call coldEquiv() for that. `steps` is this run's actual (warm) work.
   stats(): EvalStats {
+    const nodes = this.#s.nodeCount()
+    const [calls, maxStack, leafRules, stemRules, kRules, sRules, triageLeafRules, triageStemRules,
+      triageForkRules, treeEqRules, memoHits, memoMisses, memoWrites, cacheEntries] = this.#s.counters?.() ?? []
     return {
-      steps: this.#s.interactions(), nodes: this.#s.nodeCount(), free: this.#s.freeCount(),
+      steps: this.#s.interactions(), nodes, free: this.#s.freeCount(),
       frozenHits: this.#s.frozenHits(), firstHits: this.#s.firstHits(), hitCost: this.#s.hitCost(),
+      ...(calls === undefined ? {} : {
+        calls, maxStack, leafRules, stemRules, kRules, sRules, triageLeafRules, triageStemRules,
+        triageForkRules, treeEqRules, memoHits, memoMisses, memoWrites, cacheEntries, uniqueNodes: nodes,
+      }),
     }
   }
 
