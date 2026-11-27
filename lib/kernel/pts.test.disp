@@ -1,4 +1,4 @@
-// Recreating lib/theories/{cube,system_t,mltt}.test.disp directly on eval_types.disp.
+// Recreating lib/theories/{cube,system_t,mltt}.test.disp directly on lib/kernel/kernel.disp.
 // Every type former is a `(check, assume)` evaluator-map combinator; zero ASTs, zero custom ops.
 open use raw "../prelude.disp" {}
 open use raw "../list.disp" {}
