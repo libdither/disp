@@ -1,5 +1,5 @@
 open use raw "prelude.disp" {}
-open use raw "list.disp" {}
+open use raw "core/list.disp" {}
 open use raw "machine.disp" {}
 open use raw "verdict.disp" {}
 

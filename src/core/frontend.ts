@@ -9,12 +9,14 @@
 import type { Tree } from "../eval/eager.js"
 import type { CoreExpr } from "./ir.js"
 import type { ScopeEntry, CompileSinks, LicenseCert, SigParam } from "../elab/state.js"
+import type { Expr } from "../parse.js"
 
 /// Static export/field metadata resolved from a module/record expression.
 export interface ResolvedRecord {
   fields: string[]
   fieldTrees?: Tree[]
   fieldTypes?: (Tree | null)[]
+  fieldTypeExprs?: (Expr | null)[]
   fieldGuards?: (Tree | null)[]
   fieldCerts?: (LicenseCert | null)[]
   fieldParams?: (SigParam[] | undefined)[]

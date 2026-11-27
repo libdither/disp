@@ -7,7 +7,7 @@
 // challenge — is itself a claim the honest check can refute. A claim is a program
 // {witness, challenge} => Bool.
 open use raw "prelude.disp" {}
-open use raw "list.disp" {}
+open use raw "core/list.disp" {}
 open use raw "verdict.disp" {}
 open use raw "stream.disp" {}
 

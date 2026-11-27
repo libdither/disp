@@ -1,0 +1,9 @@
+// Disp standard library barrel: kernel prelude + Option + Result + Ordering + Nat + List.
+// All type methods are lexically qualified (`Option.map`, `Result.map`, `List.map`, `Nat.add`),
+// so opening `lib/std.disp` introduces zero name collisions while enabling Rust-style dot chains.
+open use "kernel/prelude.disp"
+open use "cmp.disp"
+open use "option.disp"
+open use "result.disp"
+open use "nat.disp"
+open use "list.disp"

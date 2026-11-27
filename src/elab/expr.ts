@@ -411,25 +411,25 @@ function exprToCirInner(
         const acc = pairAccessor(lookupEntry, e.field)
         if (acc) return cap({ tag: "lit", t: acc }, exprToCir(e.target, lookupEntry, resolveUse, sinks))
       }
-      // `Type.field` names a record accessor itself; `x.field` picks the record by x's type (fields.ts)
-      if (e.target.tag === "var" && !isLocal(e.target.name) && lookupEntry(e.target.name) === undefined) {
-        const accessor = lookupEntry(qualified(e.target.name, e.field))
-        if (accessor?.tree) return { tag: "lit", t: accessor.tree }
-      }
-      const owner = pickOwner(typeName(typeOf(e.target, lookupEntry)), e.field, lookupEntry)
-      if (owner)
-        return cap({ tag: "lit", t: lookupEntry(qualified(owner, e.field))!.tree! }, exprToCir(e.target, lookupEntry, resolveUse, sinks))
-      // r.x is the §2.6 cut `r (acc x)`. When the target is a statically-known
-      // record with the field, keep the compile-time collapse (return the field
-      // tree); otherwise emit the runtime cut, so projection works on any product
-      // value — a runtime metadata record, or a module tuple whose value carries
-      // fields not in the binding's compile-time field list (e.g. `(use f).typ`,
-      // where the let's known fields are the file's exports, not record/typ).
+      // Statically-known module/record projection (`ListMonad.map`, `Spec.rev`) always wins over
+      // method dispatch so module fields never collide with type methods sharing the same name.
       const record = resolveExprRecord(e.target, lookupEntry, resolveUse)
       if (record && record.fieldTrees) {
         const idx = record.fields.indexOf(e.field)
         if (idx >= 0) return { tag: "lit", t: record.fieldTrees[idx] }
       }
+      // `Type.field` names a record accessor or type method itself; `x.field` picks by x's type (fields.ts)
+      if (e.target.tag === "var") {
+        const qname = qualified(e.target.name, e.field)
+        if (isLocal(qname)) return { tag: "var", name: qname }
+        if (!isLocal(e.target.name) && lookupEntry(e.target.name)?.fields == null) {
+          const accessor = lookupEntry(qname)
+          if (accessor?.tree) return { tag: "lit", t: accessor.tree }
+        }
+      }
+      const owner = pickOwner(typeName(typeOf(e.target, lookupEntry)), e.field, lookupEntry)
+      if (owner)
+        return cap({ tag: "lit", t: lookupEntry(qualified(owner, e.field))!.tree! }, exprToCir(e.target, lookupEntry, resolveUse, sinks))
       const target = exprToCir(e.target, lookupEntry, resolveUse, sinks)
       // Vocabulary hook (like `cond` for if, `prod` for match): a scope that
       // binds `dot` owns projection — `r.x` compiles to `dot "x" r`, so a world
@@ -623,24 +623,24 @@ export function resolveExprRecord(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
   resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
-): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[]; fieldCerts?: (LicenseCert | null)[]; fieldParams?: (SigParam[] | undefined)[] } | undefined {
+): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldTypeExprs?: (Expr | null)[]; fieldGuards?: (Tree | null)[]; fieldCerts?: (LicenseCert | null)[]; fieldParams?: (SigParam[] | undefined)[] } | undefined {
   // fieldGuards/fieldCerts ride along so `open` can propagate a module export's
   // installed guard and license stamps (dropping them here silently un-guarded
   // opened names).
   if (e.tag === "var") {
     const entry = lookupEntry(e.name)
-    return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts, fieldParams: entry.fieldParams } : undefined
+    return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldTypeExprs: entry.fieldTypeExprs, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts, fieldParams: entry.fieldParams } : undefined
   }
   if (e.tag === "use") {
     const entry = resolveUse(e.path, e.raw)
-    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts, fieldParams: entry.fieldParams } : undefined
+    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldTypeExprs: entry.fieldTypeExprs, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts, fieldParams: entry.fieldParams } : undefined
   }
   // A filled instantiation `use "f" { … }` resolves like a plain use — this is what
   // lets `open use "f" { … }` and module-metadata propagation see the instantiated
   // export list.
   if (e.tag === "app" && e.f.tag === "use" && e.x.tag === "recValue") {
     const entry = resolveUse(e.f.path, e.f.raw, compileFills(e.x, lookupEntry, resolveUse))
-    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts, fieldParams: entry.fieldParams } : undefined
+    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldTypeExprs: entry.fieldTypeExprs, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts, fieldParams: entry.fieldParams } : undefined
   }
   return undefined
 }

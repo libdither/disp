@@ -11,7 +11,7 @@ import { parseProgram } from "../src/compile.js"
 // and no tree_eq intercept (RESUMABLE_INTERP_PLAN.md, "One step"). m_advance reports
 // no count, so the machine is stepped one dispatch at a time: settle, ask, step.
 const src = `open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "../machine.disp" {}
 rec add :: {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { b } else { succ(add(nat_pred(a), b)) }
 rec NatR :: {v : Tree} -> Bool :=> if (is_zero(v)) { true } else if (is_fork(v)) { if (is_leaf(v.fst)) { NatR(v.snd) } else { false } } else { false }

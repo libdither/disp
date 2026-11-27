@@ -11,7 +11,7 @@
 // tests, and a given-bearing file cannot be a root. Names carry m_/machine_:
 // is_finished (stream.disp) and Frame (kernel.disp) are taken.
 open use raw "prelude.disp" {}
-open use raw "list.disp" {}
+open use raw "core/list.disp" {}
 // the state and its frames are plain trees; a checked consumer fills these
 open given { Machine : Tree, MFrame : Tree }
 

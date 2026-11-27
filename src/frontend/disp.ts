@@ -7,7 +7,7 @@ import type { Frontend, CoreItem, CoreGiven, FrontendModule, FrontendEnv, Resolv
 import { exprToCir, resolveExprRecord, equationLhs } from "../elab/expr.js"
 import { binderToPi, binderArity, extractSignature } from "../elab/sugar.js"
 import { sugarTree } from "../elab/vocab.js"
-import { registerField } from "../elab/fields.js"
+import { registerField, peelReceiverType } from "../elab/fields.js"
 import { isGivenHead } from "../elab/modscan.js"
 import { coreToTree } from "../elab/cir.js"
 
@@ -105,7 +105,7 @@ export const dispFrontend: Frontend<Expr> = {
   onDeclared(item: Extract<CoreItem<Expr>, { tag: "declare" }>, ctx: DeclareHookCtx<Expr>): void {
     const meta = item.meta as DispFieldMeta | undefined
     if (meta?.recordField) {
-      registerField(meta.recordField.type, meta.recordField.field, meta.recordField.fieldType)
+      registerField(meta.recordField.type, meta.recordField.field, meta.recordField.fieldType ?? peelReceiverType(item.type ?? item.docType))
     }
     // Block-internal probing (`--print` / `--locals`): synthesize `Parent__local` bindings.
     if (ctx.exposeLocals && ctx.pushed && item.value != null) {

@@ -1,7 +1,7 @@
 // Companion to TYPES.html: every snippet the document shows that is not already a
 // test line in refuter.test.disp or confirmer.test.disp, run here.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "../verdict.disp" {}
 open use raw "../stream.disp" {}
 open use raw "fixtures.disp" {}

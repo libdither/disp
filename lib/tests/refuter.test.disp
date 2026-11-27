@@ -2,7 +2,7 @@
 // instead of over a symbol. It can refute with a witness, prove only by exhausting a
 // finite type's own generator, and otherwise reports how far it looked.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "../machine.disp" {}
 open use raw "../verdict.disp" {}
 open use raw "../stream.disp" {}

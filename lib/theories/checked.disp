@@ -5,7 +5,7 @@
 // (`Pred := Nat -> Nat`): at the universe a program sees each type as the leaf, so `: Type`
 // would ask for the leaf.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "../verdict.disp" {}
 open use raw "../confirm.disp" {}
 open use raw "../rules.disp" {}

@@ -1,0 +1,16 @@
+// Parametric Foldable trait module: derives `len`, `is_empty`, `all`, `any`, `contains`,
+// and `to_list` from a right fold `rfold`. Every derived export carries a pointwise-equivalence
+// guard so concrete types can attach proven-equivalent `.opt.disp` overrides.
+open use "../kernel/prelude.disp"
+
+open given {
+	F : Type -> Type
+	rfold : Implicit({A} => Implicit({B} => F(A) -> B -> (A -> B -> B) -> B))
+}
+
+guard(fn_equiv_guard(F(Tree))) len : Implicit({A} => F(A) -> Nat) := {xs} => rfold(xs, zero, {_x, n} => succ(n))
+guard(fn_equiv_guard(F(Tree))) is_empty : Implicit({A} => F(A) -> Bool) := {xs} => rfold(xs, true, {_x, _acc} => false)
+guard(fn2_equiv_guard(F(Tree), Tree -> Bool)) all : Implicit({A} => F(A) -> (A -> Bool) -> Bool) := {xs, pred} => rfold(xs, true, {x, acc} => pred(x) && acc)
+guard(fn2_equiv_guard(F(Tree), Tree -> Bool)) any : Implicit({A} => F(A) -> (A -> Bool) -> Bool) := {xs, pred} => rfold(xs, false, {x, acc} => pred(x) || acc)
+guard(fn2_equiv_guard(F(Tree), Tree)) contains : F(Tree) -> Tree -> Bool := {xs, target} => any(xs, tree_eq(target))
+guard(fn_equiv_guard(F(Tree))) to_list : Implicit({A} => F(A) -> List(A)) := {xs} => rfold(xs, [], {x, acc} => cons(x, acc))

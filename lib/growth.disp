@@ -4,7 +4,7 @@
 // claim can check on sizes it was never fitted on. A fit is evidence, not a proof:
 // search refutes it the first time a larger input takes more steps.
 open use raw "prelude.disp" {}
-open use raw "list.disp" {}
+open use raw "core/list.disp" {}
 open use raw "machine.disp" {}
 
 rec add2 :: {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { b } else { succ(add2(nat_pred(a), b)) }

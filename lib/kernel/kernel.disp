@@ -12,7 +12,7 @@
 //     branching and zero reference to `tok_sig` (so first-class types are 100% token-free).
 //   - `E_check_base` and `E_refute_base(n)` are two base evaluators implementing the same `Kit`.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "../trees.disp" {}
 open use raw "../machine.disp" {}
 

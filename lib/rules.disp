@@ -19,7 +19,7 @@
 // A first-order type is a recognizer: its cases are derived by running it, so no type adds
 // trusted code. research/CASE_TREE_SEARCH.md has the frame.
 open use raw "prelude.disp" {}
-open use raw "list.disp" {}
+open use raw "core/list.disp" {}
 open use raw "verdict.disp" {}
 open use raw "stream.disp" {}
 open use raw "claim.disp" {}

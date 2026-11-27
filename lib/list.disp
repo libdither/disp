@@ -1,42 +1,108 @@
-// Simple list manipulation library
-open use raw "prelude.disp" {}
+// Standard polymorphic list library (`List(A)`): Rust-style receiver-first methods,
+// derived from `Foldable` and `Monad` trait modules and guarded for verified `list.opt.disp` overlays.
+open use "kernel/prelude.disp"
+open use "option.disp"
 
-nil :: List(A) := t
-cons :: {item : A, rest : List(A)} -> List(A) :=> t(item, rest)
-is_nil :: List(A) -> Bool := is_leaf
-head :: List(A) -> A := pair_fst
-tail :: List(A) -> List(A) := pair_snd
-rec reduce :: {step : A -> C -> C, base : C} -> {xs : List(A)} -> C :=>
-	if (xs.is_nil) { base }
-	else { step(xs.head, reduce(xs.tail)) }
+let LT := List(Tree)
+NonEmpty : Type -> Type := {A} => Pair(A, List(A))
 
-map :: {xs : List(A), transform : A -> B} -> List(B) :=> reduce({item, mapped} => cons(transform(item), mapped), [], xs)
-append :: {xs : List(A), ys : List(A)} -> List(A) :=> reduce(cons, ys, xs)
-concat :: List(List(A)) -> List(A) := reduce(append, [])
-reverse :: List(A) -> List(A) := reduce({item, reversed} => reversed.append([item]), [])
-length :: List(A) -> Nat := reduce({_item, count} => succ(count), zero)
-filter :: {xs : List(A), keep : A -> Bool} -> List(A) :=> reduce({item, kept} => if (keep(item)) { cons(item, kept) } else { kept }, [], xs)
-all :: {xs : List(A), holds : A -> Bool} -> Bool :=> reduce({item, rest_ok} => (holds(item)) && rest_ok, true, xs)
-any :: {xs : List(A), holds : A -> Bool} -> Bool :=> reduce({item, rest_any} => (holds(item)) || rest_any, false, xs)
-member :: {xs : List(A), target : A} -> Bool :=> xs.any(tree_eq(target))
-dedup :: List(A) -> List(A) := reduce({item, deduped} => if (deduped.member(item)) { deduped } else { cons(item, deduped) }, [])
-cross :: {xs : List(A), ys : List(B), combine : A -> B -> C} -> List(C) :=> xs.map({left} => ys.map(combine(left))).concat
-rec zip :: {xs : List(A), ys : List(B)} -> List(Pair(A, B)) :=>
-	if (xs.is_nil || ys.is_nil) { [] }
-	else { cons(pair(xs.head, ys.head), zip(xs.tail, ys.tail)) }
+// Typed constructors (tree-identical to bootstrap `nil`/`cons`; carry surface `List(A)` type metadata)
+nil : Implicit({A} => List(A)) := nil
+cons : Implicit({A} => A -> List(A) -> List(A)) := cons
 
-test reduce(cons, [], [1, 2]) = [1, 2]
-test [7, 8].length = 2
-test [1, 2].map(succ) = [2, 3]
-test [1, 2].reverse = [2, 1]
-test [1].append([2]) = [1, 2]
-test [[1], [2]].concat = [1, 2]
-test [1, 2].zip([8, 9]) = [pair(1, 8), pair(2, 9)]
-test [t, 5, t].filter(is_leaf) = [t, t]
-test [t, t].all(is_leaf) = true
-test [t, 5].all(is_leaf) = false
-test [t, 5].any(is_fork) = true
-test [1, 2].member(2) = true
-test [1, 2].member(3) = false
-test [1, 1, 2].dedup = [1, 2]
-test [1, 2].cross([8], pair) = [pair(1, 8), pair(2, 8)]
+// Core folds (receiver-first: `xs.fold(init, f)` is left fold, `xs.rfold(init, f)` is right fold)
+let list_rfold : Implicit({A} => Implicit({B} => List(A) -> B -> (A -> B -> B) -> B)) := {xs, init, f} =>
+	fix({go, l} => if (l.is_nil) { init } else { f(l.head, go(l.tail)) })(xs)
+let rec list_fold : Implicit({A} => Implicit({B} => List(A) -> B -> (B -> A -> B) -> B)) := {xs, acc, f} =>
+	if (xs.is_nil) { acc } else { list_fold(xs.tail, f(acc, xs.head), f) }
+
+List.rfold : Implicit({A} => Implicit({B} => List(A) -> B -> (A -> B -> B) -> B)) := list_rfold
+List.fold : Implicit({A} => Implicit({B} => List(A) -> B -> (B -> A -> B) -> B)) := list_fold
+
+// Derived from `Foldable` (`len`, `is_empty`, `all`, `any`, `contains`) — guarded for `.opt.disp`
+let ListFoldable := use "traits/foldable.disp" { F := List, rfold := list_rfold }
+guard(fn_equiv_guard(LT)) List.len : Implicit({A} => List(A) -> Nat) := ListFoldable.len
+guard(fn_equiv_guard(LT)) List.is_empty : Implicit({A} => List(A) -> Bool) := ListFoldable.is_empty
+guard(fn2_equiv_guard(LT, Tree -> Bool)) List.all : Implicit({A} => List(A) -> (A -> Bool) -> Bool) := ListFoldable.all
+guard(fn2_equiv_guard(LT, Tree -> Bool)) List.any : Implicit({A} => List(A) -> (A -> Bool) -> Bool) := ListFoldable.any
+guard(fn2_equiv_guard(LT, Tree)) List.contains : LT -> Tree -> Bool := ListFoldable.contains
+
+// Structural builders & Monad primitives
+let list_append : Implicit({A} => List(A) -> List(A) -> List(A)) := {xs, ys} => list_rfold(xs, ys, cons)
+guard(fn2_equiv_guard(LT, LT)) List.append : Implicit({A} => List(A) -> List(A) -> List(A)) := list_append
+
+let list_pure : Implicit({A} => A -> List(A)) := {x} => [x]
+let list_flat_map : Implicit({A} => Implicit({B} => List(A) -> (A -> List(B)) -> List(B))) := {xs, f} =>
+	list_rfold(xs, [], {x, acc} => list_append(f(x), acc))
+guard(fn2_equiv_guard(LT, Tree -> LT)) List.flat_map : Implicit({A} => Implicit({B} => List(A) -> (A -> List(B)) -> List(B))) := list_flat_map
+
+// Derived from `Monad` (`map`, `flatten`, `ap`, `traverse`, `sequence`) — guarded for `.opt.disp`
+let ListMonad := use "traits/monad.disp" { M := List, pure := list_pure, flat_map := list_flat_map }
+guard(fn2_equiv_guard(LT, Tree -> Tree)) List.map : Implicit({A} => Implicit({B} => List(A) -> (A -> B) -> List(B))) := ListMonad.map
+guard(fn_equiv_guard(List(LT))) List.flatten : Implicit({A} => List(List(A)) -> List(A)) := ListMonad.flatten
+guard(fn2_equiv_guard(List(Tree -> Tree), LT)) List.ap :: List(Tree -> Tree) -> LT -> LT := ListMonad.ap
+guard(fn2_equiv_guard(LT, Tree -> LT)) List.traverse :: LT -> (Tree -> LT) -> List(LT) := ListMonad.traverse
+guard(fn_equiv_guard(List(LT))) List.sequence :: List(LT) -> List(LT) := ListMonad.sequence
+
+// Safe Rust-style accessors (returning `Option`) plus total `NonEmpty` projections
+List.head : Implicit({A} => NonEmpty(A) -> A) := head
+List.tail : Implicit({A} => NonEmpty(A) -> List(A)) := tail
+List.push_front : Implicit({A} => List(A) -> A -> List(A)) := {xs, x} => cons(x, xs)
+
+List.first : Implicit({A} => List(A) -> Option(A)) := {xs} =>
+	if (xs.is_nil) { None } else { Some(xs.head) }
+
+List.split_first : Implicit({A} => List(A) -> Option(Pair(A, List(A)))) := {xs} =>
+	if (xs.is_nil) { None } else { Some(pair(xs.head, xs.tail)) }
+
+List.last : Implicit({A} => List(A) -> Option(A)) := fix({go, xs} =>
+	if (xs.is_nil) { None }
+	else if (xs.tail.is_nil) { Some(xs.head) }
+	else { go(xs.tail) })
+
+List.get : Implicit({A} => List(A) -> Nat -> Option(A)) := fix({go, xs, i} =>
+	if (xs.is_nil) { None }
+	else if (is_zero(i)) { Some(xs.head) }
+	else { go(xs.tail, nat_pred(i)) })
+
+// Readable specs for reverse, filter, filter_map, find, take, skip, zip, enumerate, dedup
+guard(fn_equiv_guard(LT)) List.rev : Implicit({A} => List(A) -> List(A)) := {xs} =>
+	list_rfold(xs, [], {x, acc} => list_append(acc, [x]))
+
+guard(fn2_equiv_guard(LT, Tree -> Bool)) List.filter : Implicit({A} => List(A) -> (A -> Bool) -> List(A)) := {xs, pred} =>
+	list_rfold(xs, [], {x, acc} => if (pred(x)) { cons(x, acc) } else { acc })
+
+List.filter_map : Implicit({A} => Implicit({B} => List(A) -> (A -> Option(B)) -> List(B))) := {xs, f} =>
+	list_rfold(xs, [], {x, acc} => {
+		let r := f(x)
+		if (r.fst == "Some") { cons(r.snd, acc) } else { acc }
+	})
+
+List.find : Implicit({A} => List(A) -> (A -> Bool) -> Option(A)) := {xs, pred} =>
+	fix({go, l} =>
+		if (l.is_nil) { None }
+		else if (pred(l.head)) { Some(l.head) }
+		else { go(l.tail) }
+	)(xs)
+
+List.take : Implicit({A} => List(A) -> Nat -> List(A)) := fix({go, xs, n} =>
+	if (is_zero(n)) { [] }
+	else if (xs.is_nil) { [] }
+	else { cons(xs.head, go(xs.tail, nat_pred(n))) })
+
+List.skip : Implicit({A} => List(A) -> Nat -> List(A)) := fix({go, xs, n} =>
+	if (is_zero(n)) { xs }
+	else if (xs.is_nil) { [] }
+	else { go(xs.tail, nat_pred(n)) })
+
+List.zip : Implicit({A} => Implicit({B} => List(A) -> List(B) -> List(Pair(A, B)))) := zip
+
+let rec bump_idx : Implicit({A} => List(Pair(Nat, A)) -> List(Pair(Nat, A))) := {xs} =>
+	if (xs.is_nil) { [] } else { cons(pair(succ(xs.head.fst), xs.head.snd), bump_idx(xs.tail)) }
+
+let rec list_enum_spec := {xs} =>
+	if (xs.is_nil) { [] } else { cons(pair(zero, xs.head), bump_idx(list_enum_spec(xs.tail))) }
+guard(fn_equiv_guard(LT)) List.enumerate : Implicit({A} => List(A) -> List(Pair(Nat, A))) := list_enum_spec
+
+List.dedup : LT -> LT := {xs} =>
+	list_rfold(xs, [], {x, acc} => if (List.contains(acc, x)) { acc } else { cons(x, acc) })

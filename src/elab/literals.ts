@@ -60,10 +60,12 @@ export function treeToString(t: Tree): string {
 // recognizer-rooted (not cut-rooted), so they are correctly excluded.
 // Needs the kernel in scope (`cut_sig`/`type_meta`/`pair_fst`); without
 // it, returns undefined.
+import type { ResolvedRecord } from "../core/frontend.js"
+
 export function recordFieldsFromTree(
   tree: Tree,
   lookupEntry: (name: string) => ScopeEntry | undefined,
-): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[]; fieldCerts?: (LicenseCert | null)[]; fieldParams?: (SigParam[] | undefined)[] } | undefined {
+): ResolvedRecord | undefined {
   const cutSig = lookupEntry("cut_sig")?.tree
   const typeMeta = lookupEntry("type_meta")?.tree
   const pairFst = lookupEntry("pair_fst")?.tree

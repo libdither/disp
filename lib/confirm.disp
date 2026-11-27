@@ -9,7 +9,7 @@
 // concretely), or "Open" with a reason. Every Proved is cross-checked in
 // lib/tests/confirmer.test.disp against the enumeration refuter (IDEAS.disp's Arrow).
 open use raw "prelude.disp" {}
-open use raw "list.disp" {}
+open use raw "core/list.disp" {}
 open use raw "verdict.disp" {}
 open use raw "machine.disp" {}
 open use raw "stream.disp" {}

@@ -4,7 +4,7 @@
 // runs a region with everything above it as hidden context.
 //@ imports
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "../verdict.disp" {}
 open use raw "../stream.disp" {}
 open use raw "../claim.disp" {}

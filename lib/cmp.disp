@@ -1,0 +1,26 @@
+// Total ordering (`Ordering`: `Less`, `Equal`, `Greater`) and structural tree comparison.
+open use "kernel/prelude.disp"
+
+let OrderingP := {v} => (v == "Less") || ((v == "Equal") || (v == "Greater"))
+Ordering : Type := Refine(Tree, OrderingP)
+
+Less : Ordering := "Less"
+Equal : Ordering := "Equal"
+Greater : Ordering := "Greater"
+
+Ordering.is_less : Ordering -> Bool := {o} => o == "Less"
+Ordering.is_equal : Ordering -> Bool := {o} => o == "Equal"
+Ordering.is_greater : Ordering -> Bool := {o} => o == "Greater"
+
+Ordering.reverse : Ordering -> Ordering := {o} =>
+	if (o == "Less") { Greater }
+	else if (o == "Greater") { Less }
+	else { Equal }
+
+Ordering.then_cmp : Ordering -> Ordering -> Ordering := {a, b} =>
+	if (a == "Equal") { b } else { a }
+
+tree_cmp : Tree -> Tree -> Ordering := {a, b} =>
+	if (tree_eq(a, b)) { Equal }
+	else if (tree_lt(a, b)) { Less }
+	else { Greater }

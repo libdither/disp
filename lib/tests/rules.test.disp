@@ -3,7 +3,7 @@
 // else, and the work list of goals it leaves: readable as data, each step an equation the
 // naive schedule agrees with, and both agreeing with the naive type over every tree.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "../verdict.disp" {}
 open use raw "../stream.disp" {}
 open use raw "../claim.disp" {}

@@ -6,8 +6,8 @@ open use raw "../growth.disp" {}
 test default_guard(t, base(0)) = Ok(Bind(0))
 test default_guard(t, guard(freeze, base(0))) = Ok(Both(0, freeze))
 test default_guard(t, guard(freeze, sig(Nat))) = Ok(Install(freeze))
-test default_guard(t, sig(Nat)) = Err
-test freeze(t, base(0)) = Err
+test default_guard(t, sig(Nat)) = Err("missing value")
+test freeze(t, base(0)) = Err("frozen")
 
 // ---- 2. Local guarded value & function rebinds (`equiv_guard`, `fn_equiv_guard`)
 guard(equiv_guard) answer : Nat := 3

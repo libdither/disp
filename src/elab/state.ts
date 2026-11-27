@@ -111,9 +111,11 @@ export const verifiedFilledBySession = new WeakMap<Session<Tree>, Set<string>>()
 export interface ScopeEntry {
   tree?: Tree
   type?: Tree | null    // null = untyped, undefined = not yet set
+  typeExpr?: Expr | null // surface type annotation AST (for lexical type-head dot dispatch)
   fields?: string[]
   fieldTrees?: Tree[]
   fieldTypes?: (Tree | null)[]  // per-field types for open
+  fieldTypeExprs?: (Expr | null)[] // per-field surface type annotation ASTs for open
   fieldGuards?: (Tree | null)[] // per-field guards for open (owned names travel with their owner)
   fieldCerts?: (LicenseCert | null)[] // per-field license stamps for open (travel like guards)
   fieldParams?: (SigParam[] | undefined)[] // per-field named-argument signatures, so named calls work on opened names

@@ -1,0 +1,41 @@
+// Standard natural number arithmetic & comparisons (readable specs, guarded for `nat.opt.disp`).
+open use "kernel/prelude.disp"
+open use "option.disp"
+open use "cmp.disp"
+
+Nat.is_zero : Nat -> Bool := is_zero
+Nat.is_succ : Nat -> Bool := is_succ
+Nat.le : Nat -> Nat -> Bool := nat_le
+Nat.lt : Nat -> Nat -> Bool := nat_lt
+
+let rec nat_add_spec := {a, b} =>
+	if (is_zero(a)) { b } else { succ(nat_add_spec(nat_pred(a), b)) }
+guard(fn2_equiv_guard(Nat, Nat)) Nat.add : Nat -> Nat -> Nat := nat_add_spec
+
+let rec nat_sat_sub_spec := {a, b} =>
+	if (is_zero(b)) { a }
+	else if (is_zero(a)) { zero }
+	else { nat_sat_sub_spec(nat_pred(a), nat_pred(b)) }
+guard(fn2_equiv_guard(Nat, Nat)) Nat.saturating_sub : Nat -> Nat -> Nat := nat_sat_sub_spec
+
+let rec nat_chk_sub_spec := {a, b} =>
+	if (is_zero(b)) { Some(a) }
+	else if (is_zero(a)) { None }
+	else { nat_chk_sub_spec(nat_pred(a), nat_pred(b)) }
+guard(fn2_equiv_guard(Nat, Nat)) Nat.checked_sub : Nat -> Nat -> Option(Nat) := nat_chk_sub_spec
+
+let rec nat_mul_spec := {a, b} =>
+	if (is_zero(a)) { zero } else { Nat.add(b, nat_mul_spec(nat_pred(a), b)) }
+guard(fn2_equiv_guard(Nat, Nat)) Nat.mul : Nat -> Nat -> Nat := nat_mul_spec
+
+guard(fn_equiv_guard(Nat)) Nat.dbl : Nat -> Nat := {n} => Nat.add(n, n)
+
+let rec nat_pow_spec := {base, exp} =>
+	if (is_zero(exp)) { 1 } else { Nat.mul(base, nat_pow_spec(base, nat_pred(exp))) }
+guard(fn2_equiv_guard(Nat, Nat)) Nat.pow : Nat -> Nat -> Nat := nat_pow_spec
+
+Nat.min : Nat -> Nat -> Nat := {a, b} => if (nat_le(a, b)) { a } else { b }
+Nat.max : Nat -> Nat -> Nat := {a, b} => if (nat_le(a, b)) { b } else { a }
+
+Nat.cmp : Nat -> Nat -> Ordering := {a, b} =>
+	if (nat_le(a, b)) { if (nat_le(b, a)) { Equal } else { Less } } else { Greater }

@@ -1,0 +1,27 @@
+// Bootstrap list substrate (raw, zero kernel dependency — used by kernel & theories).
+// For the typed, guarded, Rust-style standard list library, use `lib/list.disp`.
+open use raw "../prelude.disp" {}
+
+nil :: List(A) := t
+cons :: {item : A, rest : List(A)} -> List(A) :=> t(item, rest)
+is_nil :: List(A) -> Bool := is_leaf
+head :: List(A) -> A := pair_fst
+tail :: List(A) -> List(A) := pair_snd
+rec reduce :: {step : A -> C -> C, base : C} -> {xs : List(A)} -> C :=>
+	if (xs.is_nil) { base }
+	else { step(xs.head, reduce(xs.tail)) }
+
+map :: {xs : List(A), transform : A -> B} -> List(B) :=> reduce({item, mapped} => cons(transform(item), mapped), [], xs)
+append :: {xs : List(A), ys : List(A)} -> List(A) :=> reduce(cons, ys, xs)
+concat :: List(List(A)) -> List(A) := reduce(append, [])
+reverse :: List(A) -> List(A) := reduce({item, reversed} => reversed.append([item]), [])
+length :: List(A) -> Nat := reduce({_item, count} => succ(count), zero)
+filter :: {xs : List(A), keep : A -> Bool} -> List(A) :=> reduce({item, kept} => if (keep(item)) { cons(item, kept) } else { kept }, [], xs)
+all :: {xs : List(A), holds : A -> Bool} -> Bool :=> reduce({item, rest_ok} => (holds(item)) && rest_ok, true, xs)
+any :: {xs : List(A), holds : A -> Bool} -> Bool :=> reduce({item, rest_any} => (holds(item)) || rest_any, false, xs)
+member :: {xs : List(A), target : A} -> Bool :=> xs.any(tree_eq(target))
+dedup :: List(A) -> List(A) := reduce({item, deduped} => if (deduped.member(item)) { deduped } else { cons(item, deduped) }, [])
+cross :: {xs : List(A), ys : List(B), combine : A -> B -> C} -> List(C) :=> xs.map({left} => ys.map(combine(left))).concat
+rec zip :: {xs : List(A), ys : List(B)} -> List(Pair(A, B)) :=>
+	if (xs.is_nil || ys.is_nil) { [] }
+	else { cons(pair(xs.head, ys.head), zip(xs.tail, ys.tail)) }
