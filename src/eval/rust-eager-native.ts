@@ -169,7 +169,8 @@ class RustEagerNativeSession implements Session<number> {
     throw new Error("rust-eager-native: classify failed (budget exhausted?)")
   }
 
-  // Interaction count (the backend-declared unit, never compared to eager's steps).
+  // Interaction count: fork dispatches, the same rules and shortcuts as eager's `steps`
+  // (they agree to within a few steps; native intercepts account for the rest).
   // `nodes` exposes the live arena high-water (for observing scoped reclamation).
   // `coldEquiv` adds the cold cost charged for frozen-snapshot hits: the steps the run
   // would have spent with no snapshot (an upper bound; see types.ts).

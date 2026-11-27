@@ -68,9 +68,10 @@ class RustEagerSession implements Session<number> {
     this.#x = inst.exports as unknown as RustEagerExports
     this.#budget = opts?.defaultBudget ?? DEFAULT_BUDGET
     this.#noNativeIntercept = opts?.noNativeIntercept === true
-    // Memory knob: cap the apply memo for smaller-footprint / long-lived sessions
-    // (RUST_EAGER_MEMO_LIMIT=<entries>). Off by default — per-file sessions are bounded
-    // by dispose() anyway; this is for constrained or long-running deployments.
+    // Memory knob: bound the apply memo for smaller-footprint / long-lived sessions
+    // (RUST_EAGER_MEMO_LIMIT=<entries>, kept as two generations of half that). Off by
+    // default — per-file sessions are bounded by dispose() anyway; this is for constrained
+    // or long-running deployments.
     const lim = Number(process.env.RUST_EAGER_MEMO_LIMIT ?? 0)
     if (Number.isFinite(lim) && lim > 0) this.#x.tc_set_memo_limit(lim >>> 0)
   }
