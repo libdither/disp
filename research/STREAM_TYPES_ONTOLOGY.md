@@ -2,7 +2,7 @@
 
 Research and design analysis, 2026-09-18. No implementation proposal here has been landed.
 
-The starting point is `STREAM_TYPES_PLAN.md`, especially its relation-based spaces, fair witness streams, proposed telescopes, and “optimization adjoints.” The status statement still matches the inspected files: endings are implemented in `lib/stream.disp` and `lib/verdict.disp`; the proposed `lib/space.disp` and `lib/tele.disp` are absent. Keep the plan for now, but revise the mathematical claims identified below before implementing those parts.
+The starting point is `archive/STREAM_TYPES_PLAN.md`, especially its relation-based spaces, fair witness streams, proposed telescopes, and “optimization adjoints.” The status statement still matches the inspected files: endings are implemented in `lib/stream.disp` and `lib/verdict.disp`; the proposed `lib/space.disp` and `lib/tele.disp` are absent. Keep the plan for now, but revise the mathematical claims identified below before implementing those parts.
 
 ## 1. The closest existing answers
 

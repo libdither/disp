@@ -186,7 +186,7 @@ refute.
    domain and splits where it looks, which is the loop's generic run and case split,
    nested. Before, a lemma's function argument had to be an unknown piece. Since 2026-11-18
    it is the loop itself (`search_g`) on that one case, with induction for a recursive value
-   (research/JUDGE_FROM_LENSES.md, section 6).
+   (archive/JUDGE_FROM_LENSES.md, section 6).
 6. **Eliminators come with the type (2026-11-11).** A type with cases has an eliminator,
    derived from its cases as the cases were derived from the type: `fold_of(T)` in
    `lib/confirm.disp`. Nothing is given beside the type. Programs written with it have no

@@ -379,7 +379,7 @@ untouched underneath, proves the run never ends. An earlier version of this note
 ## 8. Where it would land, and decisions
 
 - `within` and `accepts` belong beside `lib/machine.disp`; the quantifiers (`every`,
-  `some`, `every_task`) in a stream-layer module. Part 2 of `STREAM_TYPES_PLAN.md` (spaces,
+  `some`, `every_task`) in a stream-layer module. Part 2 of `archive/STREAM_TYPES_PLAN.md` (spaces,
   telescopes, environments) is not needed. Part 3's symbolic machine is the fused observer
   above with placeholders in place of trees.
 - **Decisions.** Which prior over trees weighted sums should use (geometric weights by

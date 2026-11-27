@@ -3,7 +3,7 @@
 Archived 2026-09-29, unfinished (last kernel work 2026-08-29, next stage P0 never
 started). Checkers get rebuilt as shortcuts inside the stream layer instead, where a
 checker's soundness is a claim run against the honest stream rather than a type it gives
-itself (`STREAM_TYPES_PLAN.md`, Part 3). The trust facts and boundaries below are
+itself (`archive/STREAM_TYPES_PLAN.md`, Part 3). The trust facts and boundaries below are
 distilled there as a checklist. The census numbers describe lib/kernel/ as of 2026-08-25.
 
 Goal: total annotation of the kernel (lib/kernel/, the promoted standalone checker). Every definition in

@@ -8,7 +8,7 @@ type family that still answers natively (the annotation plan's boundary 8). S2's
 prerequisite, the typed equation ledger, landed 2026-08-15 (A7); the relatedness judgment
 it unblocked (`rel_probe` in `lib/kernel/kernel.test.disp`) works but stayed test-only, so
 `Fn Q B` still does not enforce respect. The stream layer's Pi relates related inputs by
-construction (`STREAM_TYPES_PLAN.md`, Part 2).
+construction (`archive/STREAM_TYPES_PLAN.md`, Part 2).
 
 This file tracks the kernel (`lib/kernel/`, the provenance-based checker that
 was promoted from lib/standalone/ on 2026-08-17). The previous kernel's ledger

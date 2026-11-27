@@ -36,12 +36,16 @@
 #v(1em)
 
 #note[
-  *Status.* Comprehensive specification of the evaluator-map type system implemented in
-  #raw("research/type-system-goals/eval_types.disp") and validated across 210 tests in
-  #raw("eval_types.test.disp") and #raw("pts_eval.test.disp"). Supersedes the retired
-  two-op walker spec at #raw("archive/live-kernel/TYPE_THEORY.typ"). Remaining milestones
-  (totality, extensible state for linearity/effects, HoTT paths, universes, stream-type
-  integration, and stdlib promotion) are tracked in #raw("FINAL_TYPE_SYSTEM_NEXT_STEPS.md").
+  *Status.* Specification of Disp's promoted evaluator-map kernel implemented in
+  #raw("lib/kernel/kernel.disp") and #raw("lib/kernel/surface.disp") (opened via
+  #raw("lib/kernel/prelude.disp")), validated across #raw("lib/kernel/kernel.test.disp"),
+  #raw("lib/kernel/pts.test.disp"), #raw("lib/kernel/guards.test.disp"), the checked
+  standard library (#raw("lib/kernel/std_*.disp")), verified rewrites
+  (#raw("lib/kernel/verified_opt.disp") / #raw("lib/kernel/verified_opt.opt.disp")), and
+  #raw("test/guards.test.ts"). Supersedes #raw("archive/live-kernel/TYPE_THEORY.typ"),
+  #raw("archive/provenance-kernel/"), and #raw("archive/type-system-goals/"). Remaining
+  milestones (extensible `meta` state for linearity/effects/cost, HoTT paths, stratified
+  universes, and stream-type soundness) are tracked in #raw("FINAL_TYPE_SYSTEM_NEXT_STEPS.md").
 ]
 
 = Overview & Design Principles
@@ -260,10 +264,10 @@ All type formers compose purely from their sub-types' `(check, assume)` pairs:
     [`opaque_with_elim(A, fn, R)`], [Verifies `fn : fn_t(A, R)` before approving `fn(u)` on opaque `A`], [Abstract data types with verified eliminators],
     [`bounded_pi(A, fam, bound)`], [Disables `with_rec`; runs `f(arg)` under `Cap(lim)` with oracle-step accounting], [Step-bounded totality & complexity bounds],
   ),
-  caption: [Complete set of composable type formers in `eval_types.disp`.],
+  caption: [Complete set of composable type formers in `lib/kernel/kernel.disp`.],
 )
 
-From these formers alone, `pts_eval.test.disp` reconstructs without extra primitives:
+From these formers alone, `lib/kernel/pts.test.disp` reconstructs without extra primitives:
 - *Lambda Cube:* STLC (`compose`, rejecting `{x} => x(x)`), System F (`church_nat`,
   `church_plus`, `church_bool`), type operators (`twice_op`), LF (`pi_t` over families),
   System F-$omega$ (`pair_op`, `poly_op`), $lambda P 2$ (`eq_base`, `trans_base`),
@@ -309,29 +313,41 @@ lexicographically:
   defer the check to `x_2` against `orig_2` (and so on), approving direct lexicographic
   recursion such as Ackermann `ack(m, n)` and curried folds such as `lib/list.disp`'s
   `reduce(step, base, xs)`.
-- Otherwise reject with `"Non-decreasing recursive call"` (a non-fault refusal, so `refute`
-  is unaffected).
+- Otherwise try right-to-left (RTL) lexicographic decrease (still rejecting oscillating
+  or swapping recursion), or reject with `"Non-decreasing recursive call"` (a non-fault
+  refusal, so `refute` is unaffected).
 
-Explicitly partial functions remain available via `partial_pi` / `partial_fn`, and fixed
-cost bounds remain available via `bounded_pi` / `bounded_t`.
+Explicitly partial functions remain available via `partial_pi` / `partial_fn` (which also
+supports Scott induction for first-class recursive self-reference such as `c_fold`, while
+rejecting `TotalRecArmed` leaks into total `Fn`), and fixed cost bounds remain available
+via `bounded_pi` / `bounded_t`.
 
-= Surface Syntax Integration (`:` Annotations)
+= Surface Syntax Integration, Certificates & Verified Rewrites
 
-Disp's module driver (`src/elab/driver.ts`, `src/elab/vocab.ts`) already decouples surface
-syntax from any particular kernel through a tiny scope protocol:
+Disp's module driver (`src/elab/driver.ts`, `src/elab/vocab.ts`) decouples surface syntax
+from any particular kernel through a small scope protocol implemented in
+`lib/kernel/surface.disp` (re-exported by `lib/kernel/prelude.disp`):
 
 - *Binder desugaring (`Pi`):* `{x : A} -> B` desugars to `Pi(A, {x} => B)` and `A -> B`
-  to `Pi(A, {_} => B)`. Routing `Pi(Type, fam)` to `forall_t(fam)` (and `Pi(TypeFam, fam)`
-  to `forall_fam_t(fam)`) makes standard surface annotations like
-  `ident : {A : Type} -> A -> A := {_a, x} => x` compile directly to evaluator-map types.
-- *Deferred module verification (`check_module`):* Whenever a non-`raw` `use`d module has
-  `check_module`, `make_record`, `list_const`, and `true` in scope, the driver invokes
-  `check_module([(name, typ), ...], make_record(names, vals))`.
-- *Sequential lemma accumulation:* `check_module` walks annotated exports in file order,
-  calling `why(lemmas, T, v)` on each entry. Verified function exports are prepended to
-  `lemmas` for subsequent entries. Returning `true` loads the module; returning a list of
-  `pair(name, reason)` pairs causes the driver's `worldReport` to reject the load and print
-  the exact failing definitions and reasons.
+  to `Pi(A, {_} => B)`. Currying `Pi` on `A` lets closed domains fold at compile time,
+  and routing `Pi(Type, fam)` to `forall_t(fam)` (and `Pi(TypeFam, fam)` to
+  `forall_fam_t(fam)`) compiles `{A : Type} -> A -> A` directly to evaluator-map types.
+- *Deferred module verification (`check_module`) & cross-module certificates:* Whenever a
+  non-`raw` `use`d module has `check_module`, `make_record`, `list_const`, and `true` in
+  scope, the driver invokes `check_module([(name, typ), ...], make_record(names, vals))`.
+  `check_certified` checks annotated exports in file order, promoting verified functions
+  as lemmas for subsequent entries, and `certify` / `cert_pick` export unforgeable
+  cross-module certificates so downstream checked modules (`lib/kernel/std_*.disp`) reuse
+  proved lemmas without re-checking.
+- *Declaration guard protocol & verified `.opt.disp` rewrites:* `lib/kernel/surface.disp`
+  provides the declaration protocol (`default_guard`, `freeze`, `base`, `let`, `sig`,
+  `guard`, `given`) and relation-generic rewrite guards (`rel_guard`, `equiv_guard`,
+  `fn_equiv_guard`, `fn2_equiv_guard`). A guarded export can only be rebound by supplying
+  `{ new := fast; proof := pf }` (and optional certified lemmas `certs`) that passes
+  `check_certified` against `rel(old, new)`. `lib/kernel/verified_opt.disp` and
+  `lib/kernel/verified_opt.opt.disp` demonstrate verified in-place upgrades (`add_nat`,
+  `dbl`, `rev` → `rev_fast`), pinned by `lib/kernel/guards.test.disp` and
+  `test/guards.test.ts`.
 
 = Soundness, Step-Indexed Simulation, and Stream Types
 
@@ -369,16 +385,16 @@ to a missing invariant in one of these five laws.
 
 == Relationship to Stream Types
 
-Disp's stream layer (`lib/stream.disp`, `lib/claim.disp`, `STREAM_TYPES_PLAN.md`,
+Disp's stream layer (`lib/stream.disp`, `lib/claim.disp`, `archive/STREAM_TYPES_PLAN.md`,
 `research/STREAM_TYPES_ONTOLOGY.md`) is the dual half of this architecture:
 
 - *Honest refutation as an `Items` stream:* Replacing `first_found(tried(n), ...)` in
   `refute_kit.quantify` with a coalgebraic `Items(Tree)` counterexample stream separates
   `exhausted` (truly `"Proved"` on finite domains such as `Bit -> Bit`) from `spent`
   (`"Open"` — ran out of budget) from a yielded counterexample (`"Refuted"`).
-- *`Eval` fills `STREAM_TYPES_PLAN.md` Part 3:* The layered `Eval` machine is the modular
-  symbolic machine over `lib/machine.disp` that Part 3 left open, and `sound_refuter` is an
-  instance of `lens_holds` (`lib/claim.disp`).
+- *`Eval` fills `archive/STREAM_TYPES_PLAN.md` Part 3:* The layered `Eval` machine is the
+  modular symbolic machine over `lib/machine.disp` that Part 3 left open, and
+  `sound_refuter` is an instance of `lens_holds` (`lib/claim.disp`).
 - *What streams prove vs. what requires induction:* Base dispatch rules (`K`, `S`, `triage`,
   `tree_eq`) over finite rule shapes can be *proved by exhaustion* inside disp via `over`.
   Because symbolic checking branches (`with_data`) and takes multi-step shortcuts
@@ -388,8 +404,8 @@ Disp's stream layer (`lib/stream.disp`, `lib/claim.disp`, `STREAM_TYPES_PLAN.md`
 
 = Open Extensions
 
-The five remaining architectural milestones toward a universal type-theory generator are
-detailed in `FINAL_TYPE_SYSTEM_NEXT_STEPS.md`: (1) structural/lexicographic totality
-(@sec:termination), (2) extensible `meta` state for linear/affine/effect/cost systems,
-(3) computational path witnesses for HoTT, (4) stratified universes `Type_i` and Goal-4
-callable types, and (5) `lib/stream.disp` refuter integration and mechanized soundness.
+The four remaining architectural milestones toward a universal type-theory generator are
+detailed in `FINAL_TYPE_SYSTEM_NEXT_STEPS.md`: (1) extensible `meta` state for
+linear/affine/effect/cost systems, (2) computational path witnesses for HoTT,
+(3) stratified universes `Type_i` and Goal-4 callable types, and (4) `lib/stream.disp`
+refuter integration, mechanized soundness, and retiring `lib/theories/checked.disp`.

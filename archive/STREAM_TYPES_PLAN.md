@@ -1,5 +1,7 @@
 # Stream types: endings, spaces and telescopes, the contract as a claim
 
+> **Archived (2026-11-27):** Part 1 landed in `lib/stream.disp` and `lib/verdict.disp`, Part 2 was superseded by `research/CLAIMS_OVER_TREES.md` and `lib/claim.disp`, and Part 3's symbolic machine landed in `lib/kernel/kernel.disp` (and `lib/confirm.disp`). See [`TYPE_SYSTEM.typ`](../TYPE_SYSTEM.typ) and [`FINAL_TYPE_SYSTEM_NEXT_STEPS.md`](../FINAL_TYPE_SYSTEM_NEXT_STEPS.md) for the current architecture and open milestones.
+
 Status (2026-10-06): Part 1 is landed (`lib/stream.disp`, `lib/verdict.disp`,
 `lib/tests/stream.test.disp`) on a general coalgebra core (see the end of Part 1). Part 2
 (spaces and telescopes) is superseded: `research/CLAIMS_OVER_TREES.md` removed the

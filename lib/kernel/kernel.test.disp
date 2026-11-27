@@ -1,6 +1,7 @@
-// Full core test suite for eval_types.disp: recreates all 93 tests from sealed.test.disp
-// PLUS quotients, custom approved eliminators, bounded_pi (catching looping bogus proofs),
-// transitivity & neutral-call congruence, binary forall_k(2), and token-free first-class types!
+// Core test suite for lib/kernel/kernel.disp: structural/lexicographic totality,
+// quotients, custom approved eliminators, bounded_pi (catching looping bogus proofs),
+// transitivity & neutral-call congruence, binary forall_k(2), cross-module certificates,
+// Scott induction in PartialFn, and token-free first-class types.
 open use raw "../prelude.disp" {}
 open use raw "../list.disp" {}
 open use raw "kernel.disp" {}
