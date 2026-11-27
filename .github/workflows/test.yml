@@ -3,45 +3,53 @@ name: Tests
 on:
   push:
     branches: [main]
-    paths:
-      - 'src/**'
-      - 'lib/**'
-      - 'archive/live-kernel/**'
-      - 'test/**'
-      - 'evaluators/rust-eager/**'
-      - 'evaluators/rust-ic-net/**'
-      - 'evaluators/lambada/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'vitest.config.ts'
-      - 'tsconfig.json'
-      - '.github/workflows/test.yml'
   pull_request:
-    paths:
-      - 'src/**'
-      - 'lib/**'
-      - 'archive/live-kernel/**'
-      - 'test/**'
-      - 'evaluators/rust-eager/**'
-      - 'evaluators/rust-ic-net/**'
-      - 'evaluators/lambada/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'vitest.config.ts'
-      - 'tsconfig.json'
-      - '.github/workflows/test.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run; runs on main never cancel each other.
 concurrency:
-  group: tests-${{ github.ref }}
-  cancel-in-progress: true
+  group: tests-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Decide whether code/test/evaluator paths changed. Docs/website-only PRs skip the heavy
+  # builds so the single required `check` gate still runs and auto-merge fires cleanly.
+  changes:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - id: changes
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "code=true (${{ github.event_name }} event)"
+            exit 0
+          fi
+          files=$(git diff --name-only HEAD^1 HEAD || true)
+          echo "$files"
+          if [ -z "$files" ] || printf '%s\n' "$files" | grep -qE '^(src/|lib/|archive/live-kernel/|test/|evaluators/(rust-eager|rust-ic-net|lambada)/|package\.json$|package-lock\.json$|vitest\.config\.ts$|tsconfig\.json$|\.github/workflows/test\.yml$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "code=true: code/test/evaluator paths changed"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "code=false: no code/test/evaluator paths changed"
+          fi
+
   # Evaluator artifacts are gitignored; build them once and hand them to the
   # test jobs. Without rust_eager.node the suite falls back to the eager TS
   # oracle (far too slow for CI); the wasm/ic-net/lambada artifacts unlock
   # their differential-conformance test files (which skip when absent).
   build-evaluators:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
@@ -126,3 +134,21 @@ jobs:
           DISP_TEST_SHARD: ${{ matrix.shard }}
           DISP_MEMO_CACHE: '0'
         run: npm test -- test/disp.test.ts
+
+  # Branch protection requires this job by name. It passes only when every job passed,
+  # or was skipped solely because `changes` said the PR does not touch code/tests/evaluators.
+  # It runs on failure and cancellation too, so it never reads as skipped (which GitHub counts as passed).
+  check:
+    needs: [changes, build-evaluators, unit, disp-suite]
+    if: always()
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          code=$(jq -r '.changes.outputs.code // ""' <<<"$NEEDS")
+          bad=$(jq -r --arg code "$code" 'to_entries[] | select(.value.result != "success" and (.key == "changes" or .value.result != "skipped" or $code != "false")) | .key' <<<"$NEEDS")
+          if [ -n "$bad" ]; then echo "not passed: $(echo $bad)"; exit 1; fi
+          echo "code=$code: all passed"
