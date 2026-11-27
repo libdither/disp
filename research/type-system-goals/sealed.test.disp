@@ -1,0 +1,171 @@
+// Companion to sealed.disp: mirrors type_kit.test.disp + wrapper.test.disp + higher-order
+// composition + order-2/3 sealing exploit tests.
+open use raw "../../lib/prelude.disp" {}
+open use raw "../../lib/list.disp" {}
+open use raw "sealed.disp" {}
+
+// Plain predicates — no constructor tables needed (derive_cases extracts constructors on the fly)
+rec NatP :: {v : Tree} -> Bool :=> if (is_leaf(v)) { true } else if (is_fork(v)) { if (is_leaf(v.fst)) { NatP(v.snd) } else { false } } else { false }
+BitP :: {v : Tree} -> Bool :=> if (is_leaf(v)) { true } else if (is_stem(v)) { is_leaf(stem_child(v)) } else { false }
+OneP :: {v : Tree} -> Bool :=> v == t(t)
+rec ListNP :: {v : Tree} -> Bool :=> if (is_leaf(v)) { true } else if (is_fork(v)) { if (NatP(v.fst)) { ListNP(v.snd) } else { false } } else { false }
+
+Nat := data(NatP)
+Bit := data(BitP)
+One := data(OneP)
+Empty := EmptyT
+NN := fn(Nat, Nat)
+H := fn(NN, Nat)
+ListN := data(ListNP)
+ListNN := ListW(NN)
+
+rec dbl_n :: {n : Tree} -> Tree :=> if (is_zero(n)) { zero } else { succ(succ(dbl_n(nat_pred(n)))) }
+rec add_n :: {a : Tree, b : Tree} -> Tree :=> if (is_zero(a)) { b } else { succ(add_n(nat_pred(a), b)) }
+rec len_n :: {xs : Tree} -> Tree :=> if (is_leaf(xs)) { zero } else { succ(len_n(xs.snd)) }
+rec map_n :: {xs : Tree, f : Tree} -> Tree :=> if (is_leaf(xs)) { [] } else { cons(f(xs.head), map_n(xs.tail, f)) }
+rec copy_n :: {n : Tree} -> Tree :=> if (is_zero(n)) { zero } else { succ(copy_n(nat_pred(n))) }
+rec is_even :: {n : Tree} -> Tree :=> if (is_zero(n)) { true } else { not(is_even(nat_pred(n))) }
+rec spin :: {n : Tree} -> Tree :=> spin(n)
+rec bad_base :: {n : Tree} -> Tree :=> if (is_zero(n)) { t(t) } else { bad_base(nat_pred(n)) }
+rec bad_later :: {n : Tree, k : Tree} -> Tree :=> if (is_zero(k)) { t(t) } else { bad_later(k, nat_pred(k)) }
+rec fold_n :: {xs : Tree, f : Tree, z : Tree} -> Tree :=> if (is_leaf(xs)) { z } else { f(xs.head, fold_n(xs.tail, f, z)) }
+rec bot :: {x : Tree} -> Tree :=> bot(x)
+dup := {n} => pair(n, n)
+quad := {n} => dbl_n(dbl_n(n))
+
+// ---- 1. meaning refutes, checker accepts (first-order & partial correctness)
+test is_found(refute_at(Nat, t(t), 16)) = true
+test refute_at(Nat, 3, 16) = nothing
+test accepts(Nat, 3) = true
+test accepts(Nat, t(t)) = false
+test unoptimized(NN)(dup) = pair(1, pair(1, 1))
+test refute_at(NN, spin, 64) = nothing
+test accepts(NN, spin) = true
+
+// ---- 2. functions, recursion, containers, lemmas
+test accepts(NN, succ) = true
+test accepts(NN, dbl_n) = true
+test accepts(NN, dup) = false
+test accepts(fn(Nat, NN), add_n) = true
+test accepts(fn(ListN, Nat), len_n) = true
+test accepts(fn(ListN, fn(NN, ListN)), map_n) = true
+test accepts(ListNN, [succ, dbl_n]) = true
+test accepts(ListNN, [succ, dup]) = false
+test is_found(refute_at(ListNN, [succ, dup], 256)) = true
+test accepts(NN, bad_base) = false
+test accepts(NN, is_zero) = false
+test accepts(fn(Nat, NN), bad_later) = false
+test accepts(fn(Nat, Bit), is_zero) = true
+test accepts(NN, quad) = false
+test why([pair(dbl_n, NN)], NN, quad) = yes
+test why([pair(dup, NN)], NN, quad) = "A lemma does not check"
+
+// ---- 3. sealing, parametricity, and exploit resistance (fixing wrapper.test.disp!)
+test accepts(H, {g} => g(2)) = true
+test refute_at(H, {g} => g(2), 256) = nothing
+// not lax: handing a callback a bad argument hits fault
+test accepts(H, {g} => g(t(t))) = false
+test is_found(refute_at(H, {g} => g(t(t)), 256)) = true
+// parametric: inspecting a callback's tree hits fault (raw modus ponens restored!)
+spy_cb := {g} => if (g == succ) { t(t) } else { 0 }
+test accepts(H, spy_cb) = false
+test is_found(refute_at(H, spy_cb, 256)) = true
+// forging a token at runtime is refused
+forger := {n} => pair(append("SealedToke", if (is_zero(n)) { [110] } else { [110] }), pair("Unk", n))
+test why([], NN, forger) = "Builds a token"
+test accepts(NN, {n} => tok_unk(n)) = false
+// order-3: stealing `fault` by triaging the wrapped `succ` fails (hits hang, not fault!)
+test accepts(fn(H, Nat), {h} => h(succ)) = true
+test refute_at(fn(H, Nat), {h} => h(succ), 256) = nothing
+steal_x := {w} => w.snd.snd.fst(0)
+test refute_with(fn(H, Nat), {h} => h(succ), steal_x, 512) = nothing
+// higher-order composition works with ZERO hints!
+twice_ho := {f, m} => f(f(m))
+test accepts(fn(NN, NN), twice_ho) = true
+test accepts(fn(NN, NN), {f, m} => ({_} => 0)(f(0))) = true
+comp3 := {f, g, x} => f(g(x))
+test accepts(fn(H, fn(fn(Nat, NN), NN)), comp3) = true
+test accepts(fn(ListN, fn(fn(Nat, NN), NN)), fold_n) = true
+
+// ---- 4. K-skip laziness & diverging dependent families (type_kit.test.disp traps)
+test accepts(fn(Nat, Empty), bot) = true
+skips := {n, g} => n(is_leaf(bot(g)))
+test accepts(fn(Nat, fn(Nat, Bit)), skips) = false
+test why([pair(bot, fn(Nat, Empty))], fn(Nat, fn(Nat, Bit)), skips).fst = "Fault"
+test is_found(refute_at(fn(Nat, fn(Nat, Bit)), skips, 256)) = true
+// K-shaped constant checked eagerly by fn_lazy
+test accepts(fn_lazy(Empty, Nat), pair(t, t(t))) = false
+test is_found(refute_at(fn_lazy(Empty, Nat), pair(t, t(t)), 64)) = true
+test accepts(fn_lazy(Empty, Nat), pair(t, 0)) = true
+// diverging dependent family trap (`famE` cannot cheat via `tok_hang` in negative `pi`!)
+NE := fn(Nat, Empty)
+famE := {f} => if (is_leaf(f(0))) { Bit } else { Bit }
+Tg := pi(NE, famE)
+app5 := {g, f} => if (is_leaf(g(f))) { 5 } else { 5 }
+test accepts(Tg, t) = true
+test accepts(fn(Tg, fn(NE, Bit)), app5) = false
+test accepts(fn(NE, Bit), {f} => t(f)) = false
+
+// ---- 5. dependent types, singleton equality by induction, refinements, sigma
+fam := {n} => if (is_zero(n)) { Bit } else { Nat }
+test accepts(pi(Nat, fam), {n} => if (is_zero(n)) { t(t) } else { n }) = true
+test accepts(pi(Nat, fam), {n} => if (is_zero(n)) { 3 } else { n }) = false
+test is_found(refute_at(pi(Nat, fam), {n} => if (is_zero(n)) { 3 } else { n }, 64)) = true
+Same := pi(Nat, {n} => the(Nat, n))
+test accepts(Same, copy_n) = true
+test accepts(Same, {n} => n) = true
+test accepts(Same, dbl_n) = false
+test accepts(pi(Nat, {n} => the(Nat, succ(n))), succ) = true
+test accepts(pi(Nat, {n} => the(Nat, succ(n))), copy_n) = false
+test is_found(refute_at(Same, dbl_n, 256)) = true
+
+Even := refine(Nat, is_even)
+test accepts(Even, 4) = true
+test accepts(Even, 3) = false
+test accepts(fn(Nat, Even), dbl_n) = true
+test accepts(fn(Nat, Even), succ) = false
+test accepts(fn(Even, Even), {n} => succ(succ(n))) = true
+test accepts(fn(Even, Nat), {n} => n) = true
+test accepts(fn(Nat, Even), {n} => n) = false
+test is_found(refute_at(fn(Nat, Even), succ, 256)) = true
+
+tag := {b} => if (is_leaf(b)) { Nat } else { Bit }
+Tagged := sigma(Bit, tag)
+test accepts(Tagged, pair(t, 3)) = true
+test accepts(Tagged, pair(t(t), 3)) = false
+test accepts(fn(Bit, Tagged), {b} => pair(b, if (is_leaf(b)) { 2 } else { t(t) })) = true
+test accepts(fn(Tagged, Bit), {p} => p.fst) = true
+test accepts(pi(Tagged, {p} => tag(p.fst)), {p} => p.snd) = true
+test accepts(fn(Tagged, Nat), {p} => p.snd) = false
+test accepts(fn(sigma(NE, famE), Bit), {p} => if (is_leaf(p)) { 5 } else { 5 }) = false
+
+// ---- 6. polymorphism (dynamic brand sealing)
+IdT := forall({X} => fn(X, X))
+Church := forall({X} => fn(fn(X, X), fn(X, X)))
+test accepts(IdT, {X, x} => x) = true
+test accepts(IdT, {X, x} => zero) = false
+test is_found(refute_at(IdT, {X, x} => zero, 64)) = true
+test accepts(IdT, {X, x} => X) = false
+test accepts(IdT, {X, x} => if (is_leaf(x)) { x } else { x }) = false
+test is_found(refute_at(IdT, {X, x} => if (is_leaf(x)) { x } else { x }, 64)) = true
+test accepts(fn(IdT, Nat), {id} => id(Nat, 3)) = true
+test accepts(fn(IdT, Nat), {id} => id(Nat, t(t))) = false
+test accepts(fn(IdT, Nat), {id} => id(Bit, true)) = false
+test is_found(refute_with(fn(IdT, Nat), {id} => id(Nat, t(t)), {_X, x} => x, 512)) = true
+test accepts(Church, {X, f, x} => f(f(x))) = true
+test accepts(Church, {X, f, x} => f) = false
+
+// ---- 7. step-bounded functions (both refuter AND checker!)
+BNN := bounded(Nat, Nat, {_a} => 50)
+test accepts(BNN, succ) = true
+test accepts(BNN, spin) = false
+test is_found(refute_at(BNN, spin, 16)) = true
+test refute_at(BNN, succ, 16) = nothing
+
+// ---- 8. soundness sweep (refuter checks checker over small programs)
+BB := fn(Bit, Bit)
+test sound_refuter(NN)(accepts(NN), 16) = nothing
+test is_found(sound_refuter(NN)({_m} => true, 16)) = true
+test sound_refuter(fn(Nat, Bit))(accepts(fn(Nat, Bit)), 128) = nothing
+test sound_refuter(fn(BB, Bit))(accepts(fn(BB, Bit)), 256) = nothing
+test sound_refuter(fn(BB, BB))(accepts(fn(BB, BB)), 64) = nothing

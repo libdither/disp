@@ -1,0 +1,1081 @@
+// Sealed polarized wrappers: one program per type, one bare-unknown evaluator.
+//
+// A type is a wrapper `T(mine, yours)(v)` taking two failure handlers: `mine` when the
+// value is at fault, `yours` when its user is. `seal(blame, body)` hides a function's tree
+// behind an opaque barrier (applying runs `body`; triaging calls `blame`), so raw inputs can
+// neither spoof nor steal `fault`, and higher-order functions cannot inspect callbacks.
+//
+// Meaning (`refuted`) and checker (`why` / `accepts`) are De Morgan duals on the same
+// `T(tok_fault, tok_hang)(f)`:
+//   - Refuter: existentially searches observations (`pair` = OR, `seal(hang)` = some input x)
+//     for any path that reaches `tok_fault`.
+//   - Checker: universally verifies (`pair` = AND, `seal(hang)` = fresh bare unknown u) that
+//     no branch reaches `tok_fault`, with `tok_hang` pruning vacuous branches.
+//
+// Zero type tables and zero former-specific rules: `data`, `fn`, `pi`, `sigma`, `refine`,
+// `the`, `ListW`, `forall`, `forall_fam`, and `bounded` are ordinary disp functions.
+open use raw "../../lib/prelude.disp" {}
+open use raw "../../lib/list.disp" {}
+open use raw "../../lib/trees.disp" {}
+open use raw "../../lib/machine.disp" {}
+
+// ---------------------------------------------------------------- answers and search helpers
+yes := "Yes"
+is_yes :: Tree -> Bool := {r} => if (is_fork(r)) { r.fst == yes } else { false }
+found :: {x : Tree} -> Tree :=> pair("Found", x)
+nothing := "Nothing"
+is_found :: Tree -> Bool := {o} => not(o == nothing)
+
+rec twice :: {n : Nat} -> Nat :=> if (is_zero(n)) { zero } else { succ(succ(twice(nat_pred(n)))) }
+rec halve :: {n : Nat} -> Nat :=> if (is_zero(n)) { zero } else if (is_zero(nat_pred(n))) { zero } else { succ(halve(nat_pred(nat_pred(n)))) }
+rec log2 :: {n : Nat} -> Nat :=> if (is_zero(n)) { zero } else if (is_zero(nat_pred(n))) { zero } else { succ(log2(halve(n))) }
+rec size_levels :: {k : Nat} -> List(List(Tree)) :=> if (is_zero(k)) { [[t]] } else { let ls := size_levels(nat_pred(k)); cons(next_level(ls), ls) }
+/// trees of at most log2(n) / 2 + 1 nodes, smallest first
+tried :: {n : Nat} -> List(Tree) :=> size_levels(halve(log2(n))).reverse.concat
+rec first_found :: {xs : List(Tree), try : Tree -> Tree} -> Tree :=>
+	if (xs.is_nil) { nothing } else { let r := try(xs.head); if (is_found(r)) { r } else { first_found(xs.tail, try) } }
+rec lookup :: {table : List(Tree), key : Tree} -> Tree :=>
+	if (table.is_nil) { nothing } else if (table.head.fst == key) { found(table.head.snd) } else { lookup(table.tail, key) }
+
+// ---------------------------------------------------------------- unforgeable machine tokens
+// Every internal token shares one marker `tok_sig`, so one stem-rule guard blocks forging all
+// of them (`Fault`, `Unk`, `Call`, `Brand`, `Key`, `EndSure`).
+tok_sig := "SealedToken"
+tok :: {kind : Tree, val : Tree} -> Tree :=> pair(tok_sig, pair(kind, val))
+is_tok :: Tree -> Bool := {v} => if (is_fork(v)) { v.fst == tok_sig } else { false }
+tok_kind :: Tree -> Tree := {v} => v.snd.fst
+tok_val :: Tree -> Tree := {v} => v.snd.snd
+is_tok_of :: {kind : Tree, v : Tree} -> Bool :=> if (is_tok(v)) { tok_kind(v) == kind } else { false }
+
+tok_fault := tok("Fault", t)
+/// hang sentinel: loops at plain runtime, prunes in checker (outside `sure`), contains no `tok_sig`
+hang_marker := fix({self, _u, x} => self(t, x))
+tok_hang := wait(hang_marker, "SealedHang")
+tok_unk :: {name : Tree} -> Tree :=> tok("Unk", name)
+tok_call :: {f : Tree, x : Tree} -> Tree :=> tok("Call", pair(f, x))
+tok_brand :: {key : Tree, blame : Tree, v : Tree} -> Tree :=> tok("Brand", pair(key, pair(blame, v)))
+tok_key :: {id : Tree} -> Tree :=> tok("Key", id)
+
+is_fault :: Tree -> Bool := {v} => is_tok_of("Fault", v)
+is_hang :: Tree -> Bool := {v} => v == tok_hang
+is_unk :: Tree -> Bool := {v} => is_tok_of("Unk", v)
+is_call :: Tree -> Bool := {v} => is_tok_of("Call", v)
+is_brand :: Tree -> Bool := {v} => is_tok_of("Brand", v)
+is_key :: Tree -> Bool := {v} => is_tok_of("Key", v)
+brand_key :: Tree -> Tree := {v} => tok_val(v).fst
+brand_blame :: Tree -> Tree := {v} => tok_val(v).snd.fst
+brand_inner :: Tree -> Tree := {v} => tok_val(v).snd.snd
+
+rec has_tok :: {v : Tree} -> Bool :=>
+	if (is_leaf(v)) { false } else if (is_stem(v)) { has_tok(stem_child(v)) }
+	else if (v.fst == tok_sig) { true } else if (has_tok(v.fst)) { true } else { has_tok(v.snd) }
+
+// ---------------------------------------------------------------- machine-recognized combinators
+// One shared `wait` marker `op_marker` gives every combinator a single O(1) signature `op_sig`
+// (no hash-consing collisions, and ordinary S-steps skip all combinator checks in one test).
+op_marker := {p, arg} =>
+	if (p.fst == "Seal") { p.snd.snd(arg) }
+	else if (p.fst == "SealK") { p.snd.snd }
+	else if (p.fst == "Sure") { p.snd(arg) }
+	else if (p.fst == "Self") { p.snd.snd(arg) }
+	else if (p.fst == "Pred") { p.snd(arg) }
+	else if (p.fst == "Teq") { tree_eq(p.snd, arg) }
+	else if (p.fst == "Adv") { m_advance(p.snd, arg) }
+	else { arg }
+op :: {tag : Tree, payload : Tree} -> Tree :=> wait(op_marker, pair(tag, payload))
+op_sig := (op(t, t)).fst
+is_op :: Tree -> Bool := {v} => if (is_fork(v)) { v.fst == op_sig } else { false }
+op_tag :: Tree -> Tree := {v} => v.snd.snd.fst
+op_val :: Tree -> Tree := {v} => v.snd.snd.snd
+is_op_of :: {tag : Tree, v : Tree} -> Bool :=> if (is_op(v)) { op_tag(v) == tag } else { false }
+
+/// opaque function barrier: applying runs `body`, triaging calls `blame`
+seal :: {blame : Tree, body : Tree} -> Tree :=> op("Seal", pair(blame, body))
+is_seal :: Tree -> Bool := {v} => is_op_of("Seal", v)
+seal_blame :: Tree -> Tree := {v} => op_val(v).fst
+seal_body :: Tree -> Tree := {v} => op_val(v).snd
+
+/// opaque constant function: skips its argument (K-shaped) when applied, calls `blame` on triage
+seal_k :: {blame : Tree, val : Tree} -> Tree :=> op("SealK", pair(blame, val))
+is_seal_k :: Tree -> Bool := {v} => is_op_of("SealK", v)
+seal_k_blame :: Tree -> Tree := {v} => op_val(v).fst
+seal_k_val :: Tree -> Tree := {v} => op_val(v).snd
+
+/// dynamic brand wrapper for polymorphism: contains no `tok_fault` in its tree
+brand_call :: {key : Tree, mine : Tree, yours : Tree} -> Tree :=> op("Brand", pair(key, pair(mine, yours)))
+brand_w :: {key : Tree} -> Tree :=> {mine, yours} => brand_call(key, mine, yours)
+
+/// fresh unforgeable key generator for `forall` / `forall_fam`
+fresh_key := op("Key", t)
+
+/// polarity test for wrappers (`fn`, `pi`, `sigma`, `data`, `forall`, `forall_fam`) without mentioning `tok_sig`
+is_pos := op("Pos", t)
+
+/// evaluate `fam(arg)` without allowing `tok_hang` to prune (for negative dependent `pi`/`sigma`)
+sure_fn :: {fam : Tree} -> Tree :=> op("Sure", fam)
+
+/// mark a subject call `f(a)` under type `T` so recursive calls to `f` after a real step use `T`
+self_fn :: {T : Tree, f : Tree} -> Tree :=> op("Self", pair(T, f))
+
+/// mark a negative data predicate `p(v)` so bare unknowns record `p(u) == true` and split via `derive_cases(p)`
+pred_fn :: {p : Tree} -> Tree :=> op("Pred", p)
+
+/// detect disp's `fix(...)` shape (wait(omega, ...)) so unannotated recursive calls stay neutral on unknowns
+fix_sig := (fix({s, x} => s(x))).fst
+is_fix_fn :: Tree -> Bool := {f} => if (is_fork(f)) { f.fst == fix_sig } else { false }
+
+/// `tree_eq` and `m_advance` partial-application markers
+teq_part :: {a : Tree} -> Tree :=> op("Teq", a)
+is_teq_part :: Tree -> Bool := {f} => is_op_of("Teq", f)
+adv_part :: {m : Tree} -> Tree :=> op("Adv", m)
+
+/// `if (c) { a } else { b }` compiles to a triage whose stem and fork arms are identical constants
+is_triage :: Tree -> Bool := {f} => if (is_fork(f)) { is_fork(f.fst) } else { false }
+shape_identity := t(t(t, t), t)
+
+// ---------------------------------------------------------------- checker state
+// `fuel` is passed directly on the evaluator loop so normal steps never rebuild `SCtx`.
+record sctx :: {known : List(Tree), eqs : List(Tree), sym_eqs : List(Tree), recs : List(Tree), lemmas : List(Tree), strict : List(Tree), depth : Nat, next : Nat, sure : Bool} -> SCtx
+
+done :: {fuel : Nat} -> Tree :=> pair(yes, fuel)
+deeper :: {e : SCtx} -> SCtx :=> sctx(e.known, e.eqs, e.sym_eqs, e.recs, e.lemmas, e.strict, nat_pred(e.depth), e.next, e.sure)
+bump :: {e : SCtx} -> SCtx :=> sctx(e.known, e.eqs, e.sym_eqs, e.recs, e.lemmas, e.strict, e.depth, succ(e.next), e.sure)
+assign :: {e : SCtx, u : Tree, v : Tree} -> SCtx :=> sctx(cons(pair(u, v), e.known), e.eqs, e.sym_eqs, e.recs, e.lemmas, e.strict, e.depth, e.next, e.sure)
+record_eq :: {e : SCtx, f : Tree, x : Tree, v : Tree} -> SCtx :=> sctx(e.known, cons(pair(pair(f, x), v), e.eqs), e.sym_eqs, e.recs, e.lemmas, e.strict, e.depth, e.next, e.sure)
+record_sym_eq :: {e : SCtx, a : Tree, b : Tree} -> SCtx :=> sctx(e.known, e.eqs, cons(pair(a, b), e.sym_eqs), e.recs, e.lemmas, e.strict, e.depth, e.next, e.sure)
+strictly :: {e : SCtx, u : Tree} -> SCtx :=> sctx(e.known, e.eqs, e.sym_eqs, e.recs, e.lemmas, cons(u, e.strict), e.depth, e.next, e.sure)
+activate :: {e : SCtx, pend : List(Tree)} -> SCtx :=>
+	if (pend.is_nil) { e }
+	else { sctx(e.known, e.eqs, e.sym_eqs, pend.append(e.recs), e.lemmas, e.strict, e.depth, e.next, e.sure) }
+
+and_then :: {r : Tree, next : Tree} -> Tree :=> if (is_yes(r)) { next(r.snd) } else { r }
+rec each :: {xs : List(Tree), fuel : Nat, f : Tree} -> Tree :=>
+	if (xs.is_nil) { done(fuel) } else { and_then(f(xs.head, fuel), {f2} => each(xs.tail, f2, f)) }
+
+rec value :: {e : SCtx, v : Tree} -> Tree :=>
+	if (is_fork(v)) {
+		if (v.fst == tok_sig) {
+			if (tok_kind(v) == "Unk") {
+				let r := lookup(e.known, v)
+				if (is_found(r)) { value(e, r.snd) } else { v }
+			} else { v }
+		} else { v }
+	} else { v }
+rec resolve :: {e : SCtx, v0 : Tree} -> Tree :=> {
+	let v := value(e, v0)
+	if (is_leaf(v)) { v }
+	else if (is_stem(v)) { t(resolve(e, stem_child(v))) }
+	else if (v.fst == tok_sig) {
+		let kd := tok_kind(v)
+		if (kd == "Call") { tok_call(resolve(e, tok_val(v).fst), resolve(e, tok_val(v).snd)) }
+		else if (kd == "Brand") { tok_brand(resolve(e, brand_key(v)), brand_blame(v), resolve(e, brand_inner(v))) }
+		else { v }
+	}
+	else { pair(resolve(e, v.fst), resolve(e, v.snd)) }
+}
+rec occurs :: {u : Tree, v : Tree} -> Bool :=>
+	if (v == u) { true }
+	else if (is_leaf(v)) { false }
+	else if (is_stem(v)) { occurs(u, stem_child(v)) }
+	else { (occurs(u, v.fst)) || (occurs(u, v.snd)) }
+
+/// check if a == b holds under `e.sym_eqs` (direct or symmetric)
+sym_pair_eq :: {e : SCtx, a : Tree, b : Tree} -> Bool :=>
+	if (e.sym_eqs.is_nil) { false }
+	else {
+		e.sym_eqs.any({p} => {
+			let l := resolve(e, p.fst)
+			let r := resolve(e, p.snd)
+			((l == a) && (r == b)) || ((l == b) && (r == a))
+		})
+	}
+/// structural equality on symbolic values: "True", "False", "Stuck", or pair("Blame", handler)
+rec eq_val :: {e : SCtx, a0 : Tree, b0 : Tree} -> Tree :=> {
+	let a := value(e, a0)
+	let b := value(e, b0)
+	if (is_seal(a)) { pair("Blame", seal_blame(a)) }
+	else if (is_seal(b)) { pair("Blame", seal_blame(b)) }
+	else if (is_seal_k(a)) { pair("Blame", seal_k_blame(a)) }
+	else if (is_seal_k(b)) { pair("Blame", seal_k_blame(b)) }
+	else if (is_brand(a)) { pair("Blame", brand_blame(a)) }
+	else if (is_brand(b)) { pair("Blame", brand_blame(b)) }
+	else if (a == b) { "True" }
+	else {
+		let ra := resolve(e, a)
+		let rb := resolve(e, b)
+		if (ra == rb) { "True" }
+		else if (sym_pair_eq(e, ra, rb)) { "True" }
+		else if ((is_unk(a)) || ((is_unk(b)) || ((is_call(a)) || (is_call(b))))) { "Stuck" }
+		else if (is_tok(a)) { if (is_tok(b)) { if (a == b) { "True" } else { "False" } } else { "False" } }
+		else if (is_tok(b)) { "False" }
+		else if (is_leaf(a)) { if (is_leaf(b)) { "True" } else { "False" } }
+		else if (is_stem(a)) { if (is_stem(b)) { eq_val(e, stem_child(a), stem_child(b)) } else { "False" } }
+		else if (is_fork(b)) {
+			let l := eq_val(e, a.fst, b.fst)
+			if (l == "True") { eq_val(e, a.snd, b.snd) } else { l }
+		}
+		else { "False" }
+	}
+}
+/// structural equality on keys (brands may carry keys containing resolved expressions)
+rec key_eq :: {e : SCtx, a0 : Tree, b0 : Tree} -> Bool :=> {
+	let a := resolve(e, a0)
+	let b := resolve(e, b0)
+	if (a == b) { true }
+	else if (sym_pair_eq(e, a, b)) { true }
+	else if ((is_stem(a)) && (is_stem(b))) { key_eq(e, stem_child(a), stem_child(b)) }
+	else if ((is_fork(a)) && (is_fork(b))) { (key_eq(e, a.fst, b.fst)) && (key_eq(e, a.snd, b.snd)) }
+	else { false }
+}
+
+// ---------------------------------------------------------------- derived cases from predicates
+// Runs a plain predicate `p` once on a fresh root unknown to extract its constructors and
+// field predicates (just like lib/confirm.disp's `explore`), so data types need no tables.
+derive_root := "DeriveRoot"
+d_unk :: {path : Tree} -> Tree :=> tok_unk(pair(derive_root, path))
+is_d_unk :: Tree -> Bool := {v} => if (is_unk(v)) { if (is_fork(tok_val(v))) { tok_val(v).fst == derive_root } else { false } } else { false }
+is_strict_d_unk :: Tree -> Bool := {v} => if (is_d_unk(v)) { not(tok_val(v).snd == t) } else { false }
+
+rec d_apply_subst :: {u : Tree, val : Tree, tree : Tree} -> Tree :=>
+	if (tree == u) { val }
+	else if (is_leaf(tree)) { tree }
+	else if (is_stem(tree)) { t(d_apply_subst(u, val, stem_child(tree))) }
+	else if (tree.fst == tok_sig) {
+		if (tok_kind(tree) == "Call") { tok_call(d_apply_subst(u, val, tok_val(tree).fst), d_apply_subst(u, val, tok_val(tree).snd)) }
+		else { tree }
+	}
+	else { pair(d_apply_subst(u, val, tree.fst), d_apply_subst(u, val, tree.snd)) }
+
+d_alts :: {u : Tree} -> List(Tree) :=> {
+	let pth := tok_val(u).snd
+	[t, t(d_unk(pair("s", pth))), pair(d_unk(pair("l", pth)), d_unk(pair("r", pth)))]
+}
+
+rec d_deliver :: {v : Tree, stack : List(Tree)} -> Tree :=>
+	if (stack.is_nil) { machine_done(v) }
+	else {
+		let fr := stack.head
+		let rest := stack.tail
+		if (fr.fst == "To") { machine_run(v, fr.snd, rest) }
+		else if (fr.fst == "Res") { machine_run(fr.snd, v, rest) }
+		else if (k_shaped(fr.snd.fst)) { machine_run(v, fr.snd.fst.snd, rest) }
+		else if (not(is_fork(v))) { machine_run(fr.snd.fst, fr.snd.snd, cons(fr_res(v), rest)) }
+		else if (is_leaf(v.fst)) { d_deliver(v.snd, rest) }
+		else if (v.fst == tok_sig) { pair("DNeed", pair(v, pair(v, stack))) }
+		else { machine_run(fr.snd.fst, fr.snd.snd, cons(fr_res(v), rest)) }
+	}
+rec d_settle :: {m : Tree} -> Tree :=>
+	if (m.fst == "Run") {
+		let f := m.m_fn
+		if (is_leaf(f)) { d_settle(d_deliver(t(m.m_arg), m.m_stack)) }
+		else if (is_stem(f)) { d_settle(d_deliver(t(stem_child(f), m.m_arg), m.m_stack)) }
+		else { m }
+	} else { m }
+
+d_teq_step :: {go : Tree, shape : Tree, facts : List(Tree), a : Tree, x : Tree, stack : List(Tree), f2 : Nat, depth : Nat} -> Tree :=>
+	if ((not(has_tok(a))) && (not(has_tok(x)))) { go(shape, facts, d_deliver(tree_eq(a, x), stack), f2, depth) }
+	else if (a == x) { go(shape, facts, d_deliver(true, stack), f2, depth) }
+	else if (is_d_unk(a)) {
+		if (is_zero(depth)) { nothing }
+		else {
+			let rs := d_alts(a).map({alt} => go(d_apply_subst(a, alt, shape), facts, machine_run(teq_part(alt), d_apply_subst(a, alt, x), d_apply_subst(a, alt, stack)), f2, nat_pred(depth)))
+			if (rs.all(is_found)) { found(rs.map(pair_snd).concat) } else { nothing }
+		}
+	}
+	else if (is_d_unk(x)) {
+		if (is_zero(depth)) { nothing }
+		else {
+			let rs := d_alts(x).map({alt} => go(d_apply_subst(x, alt, shape), facts, machine_run(teq_part(d_apply_subst(x, alt, a)), alt, d_apply_subst(x, alt, stack)), f2, nat_pred(depth)))
+			if (rs.all(is_found)) { found(rs.map(pair_snd).concat) } else { nothing }
+		}
+	}
+	else if (is_leaf(a)) { go(shape, facts, d_deliver(is_leaf(x), stack), f2, depth) }
+	else if (is_stem(a)) {
+		if (is_stem(x)) { go(shape, facts, machine_run(teq_part(stem_child(a)), stem_child(x), stack), f2, depth) }
+		else { go(shape, facts, d_deliver(false, stack), f2, depth) }
+	}
+	else if (is_fork(x)) {
+		go(shape, facts, machine_run(teq_part(a.fst), x.fst, cons(fr_res(triage(teq_part(a.snd), {_} => {_} => false, {_l, _r} => {_} => false)), cons(fr_to(x.snd), stack))), f2, depth)
+	}
+	else { go(shape, facts, d_deliver(false, stack), f2, depth) }
+
+d_triage_tok :: {go : Tree, shape : Tree, facts : List(Tree), f : Tree, x : Tree, stack : List(Tree), f2 : Nat, depth : Nat} -> Tree :=>
+	if (f == shape_identity) { go(shape, facts, d_deliver(x, stack), f2, depth) }
+	else if (is_zero(depth)) { nothing }
+	else if (is_d_unk(x)) {
+		let rs := d_alts(x).map({alt} => go(d_apply_subst(x, alt, shape), facts, machine_run(d_apply_subst(x, alt, f), alt, d_apply_subst(x, alt, stack)), f2, nat_pred(depth)))
+		if (rs.all(is_found)) { found(rs.map(pair_snd).concat) } else { nothing }
+	}
+	else if (is_call(x)) {
+		let r_true := go(shape, cons(tok_val(x), facts), d_deliver(f.fst.fst, stack), f2, nat_pred(depth))
+		let r_false := go(shape, facts, machine_run(f.fst.snd, t, stack), f2, nat_pred(depth))
+		if ((is_found(r_true)) && (is_found(r_false))) { found(r_true.snd.append(r_false.snd)) } else { nothing }
+	}
+	else { nothing }
+
+d_s_step :: {go : Tree, shape : Tree, facts : List(Tree), f : Tree, x : Tree, stack : List(Tree), f2 : Nat, depth : Nat} -> Tree :=>
+	if ((f.fst == fix_sig) && (is_strict_d_unk(x))) {
+		let r := lookup(facts, pair(f, x))
+		if (is_found(r)) { go(shape, facts, d_deliver(r.snd, stack), f2, depth) }
+		else { go(shape, facts, d_deliver(tok_call(f, x), stack), f2, depth) }
+	}
+	else if (f == tree_eq) { go(shape, facts, d_deliver(teq_part(x), stack), f2, depth) }
+	else if (is_teq_part(f)) { d_teq_step(go, shape, facts, op_val(f), x, stack, f2, depth) }
+	else {
+		let c := stem_child(f.fst)
+		if (k_shaped(c)) { go(shape, facts, d_deliver(c.snd, cons(fr_s(f.snd, x), stack)), f2, depth) }
+		else { go(shape, facts, machine_run(c, x, cons(fr_s(f.snd, x), stack)), f2, depth) }
+	}
+
+rec d_go :: {shape : Tree, facts : List(Tree), mach0 : Tree, fuel : Nat, depth : Nat} -> Tree :=> {
+	let mach := d_settle(mach0)
+	if (m_finished(mach)) {
+		let res := m_result(mach)
+		if (res == true) { found([pair(shape, facts)]) }
+		else if (is_call(res)) { found([pair(shape, cons(tok_val(res), facts))]) }
+		else { found([]) }
+	}
+	else if (is_zero(fuel)) { nothing }
+	else if (mach.fst == "Run") {
+		let f := mach.m_fn
+		let x := mach.m_arg
+		let stack := mach.m_stack
+		let f2 := nat_pred(fuel)
+		if (is_leaf(f.fst)) { d_go(shape, facts, d_deliver(f.snd, stack), f2, depth) }
+		else if (is_stem(f.fst)) { d_s_step(d_go, shape, facts, f, x, stack, f2, depth) }
+		else if ((f.fst == tok_sig) || ((is_fork(f.fst)) && (f.fst.fst == tok_sig))) { nothing }
+		else if (is_leaf(x)) { d_go(shape, facts, d_deliver(f.fst.fst, stack), f2, depth) }
+		else if (is_stem(x)) { d_go(shape, facts, machine_run(f.fst.snd, stem_child(x), stack), f2, depth) }
+		else if (x.fst == tok_sig) { d_triage_tok(d_go, shape, facts, f, x, stack, f2, depth) }
+		else { d_go(shape, facts, machine_run(f.snd, x.fst, cons(fr_to(x.snd), stack)), f2, depth) }
+	}
+	else {
+		let u := mach.snd.fst
+		let v := mach.snd.snd.fst
+		let stack := mach.snd.snd.snd
+		if ((is_zero(depth)) || (not(is_d_unk(u)))) { nothing }
+		else {
+			let rs := d_alts(u).map({alt} => d_go(d_apply_subst(u, alt, shape), facts, d_deliver(d_apply_subst(u, alt, v), d_apply_subst(u, alt, stack)), nat_pred(fuel), nat_pred(depth)))
+			if (rs.all(is_found)) { found(rs.map(pair_snd).concat) } else { nothing }
+		}
+	}
+}
+
+derive_cases :: {pred : Tree} -> Tree :=> d_go(d_unk(t), [], m_start(pred, d_unk(t)), 2000, 12)
+
+/// instantiate a derived case `(shape, facts)` for unknown `u` (renaming derive pieces to fresh children of `u`)
+rec rename_d :: {u : Tree, v : Tree} -> Tree :=>
+	if (is_d_unk(v)) { tok_unk(pair("piece", pair(u, tok_val(v).snd))) }
+	else if (is_leaf(v)) { v }
+	else if (is_stem(v)) { t(rename_d(u, stem_child(v))) }
+	else { pair(rename_d(u, v.fst), rename_d(u, v.snd)) }
+instantiate_case :: {e : SCtx, u : Tree, c : Tree} -> Pair(SCtx, Tree) :=> {
+	let shape := rename_d(u, c.fst)
+	let e2 := reduce({fp, acc} => record_eq(acc, fp.fst, rename_d(u, fp.snd), true), assign(e, u, shape), c.snd)
+	pair(e2, shape)
+}
+/// find predicates `p` recorded as `p(u) == true` in `e.eqs`
+preds_of :: {e : SCtx, u : Tree} -> List(Tree) :=>
+	e.eqs.filter({entry} => (entry.snd == true) && ((entry.fst.snd == u) && (not(is_fork(entry.fst.fst) && (entry.fst.fst.fst == "Eq"))))).map({entry} => entry.fst.fst)
+rec first_derived :: {ps : List(Tree)} -> Tree :=>
+	if (ps.is_nil) { nothing }
+	else { let r := derive_cases(ps.head); if (is_found(r)) { r } else { first_derived(ps.tail) } }
+
+// ---------------------------------------------------------------- symbolic evaluator + fault_free
+blocked :: {q : Tree, v : Tree, stack : List(Tree)} -> Tree :=> pair("Blocked", pair(q, pair(v, stack)))
+m_blocked :: Tree -> Bool := {m} => m.fst == "Blocked"
+
+laziness :: {e : SCtx, v0 : Tree} -> Tree :=> {
+	let v := value(e, v0)
+	if (not(is_fork(v))) { "strict" }
+	else if (v.fst == op_sig) { if (op_tag(v) == "SealK") { "K_seal" } else { "strict" } }
+	else if (v.fst == tok_sig) {
+		let kd := tok_kind(v)
+		if (kd == "Unk") { if (e.strict.member(v)) { "strict" } else { pair("lazy", v) } }
+		else if (kd == "Call") { pair("lazy_call", v) }
+		else { "strict" }
+	}
+	else {
+		let a := value(e, v.fst)
+		if (is_leaf(a)) { "K" }
+		else if ((is_fork(a)) && (a.fst == tok_sig)) {
+			let kd := tok_kind(a)
+			if (kd == "Unk") { pair("read", a) }
+			else if (kd == "Call") { pair("read_call", a) }
+			else { "strict" }
+		}
+		else { "strict" }
+	}
+}
+
+rec s_deliver :: {e : SCtx, v : Tree, stack : List(Tree)} -> Tree :=>
+	if (stack.is_nil) { machine_done(v) }
+	else {
+		let fr := stack.head
+		let rest := stack.tail
+		if (fr.fst == "To") { machine_run(v, fr.snd, rest) }
+		else if (fr.fst == "Res") { machine_run(fr.snd, v, rest) }
+		else if (fr.fst == "EndSure") { machine_run(tok("EndSure", fr.snd), v, rest) }
+		else if (k_shaped(fr.snd.fst)) { machine_run(v, fr.snd.fst.snd, rest) }
+		else if (not(is_fork(v))) { machine_run(fr.snd.fst, fr.snd.snd, cons(fr_res(v), rest)) }
+		else if (is_leaf(v.fst)) { s_deliver(e, v.snd, rest) }
+		else {
+			let s := laziness(e, v)
+			if (s == "K") { s_deliver(e, value(e, v).snd, rest) }
+			else if (s == "K_seal") { s_deliver(e, seal_k_val(value(e, v)), rest) }
+			else if (s == "strict") { machine_run(fr.snd.fst, fr.snd.snd, cons(fr_res(v), rest)) }
+			else { blocked(s, v, stack) }
+		}
+	}
+
+s_step :: {e : SCtx, f : Tree, x : Tree, stack : List(Tree)} -> Tree :=>
+	if (is_leaf(f)) { s_deliver(e, t(x), stack) }
+	else if (is_stem(f)) { s_deliver(e, t(stem_child(f), x), stack) }
+	else if (is_leaf(f.fst)) { s_deliver(e, f.snd, stack) }
+	else if (is_stem(f.fst)) {
+		let c := stem_child(f.fst)
+		if (k_shaped(c)) { s_deliver(e, c.snd, cons(fr_s(f.snd, x), stack)) }
+		else { machine_run(c, x, cons(fr_s(f.snd, x), stack)) }
+	}
+	else if (is_leaf(x)) { s_deliver(e, f.fst.fst, stack) }
+	else if (is_stem(x)) { machine_run(f.fst.snd, stem_child(x), stack) }
+	else { machine_run(f.snd, x.fst, cons(fr_to(x.snd), stack)) }
+
+/// split an unknown `u`: use its derived predicate constructors if any, else split K vs strict (if lazy) or Tree's 3 shapes
+split_unk :: {e : SCtx, fuel : Nat, u : Tree, for_lazy : Bool, cont : Tree} -> Tree :=>
+	if (is_zero(e.depth)) { "Out of depth" }
+	else {
+		let cases := first_derived(preds_of(e, u))
+		if (is_found(cases)) {
+			let e1 := deeper(e)
+			each(cases.snd, fuel, {c, fl} => {
+				let inst := instantiate_case(e1, u, c)
+				cont(inst.fst, fl)
+			})
+		}
+		else if (for_lazy) {
+			let e1 := deeper(e)
+			let k_val := tok_unk(pair("kval", pair(u, e1.next)))
+			and_then(cont(assign(bump(e1), u, pair(t, k_val)), fuel), {f2} => cont(strictly(e1, u), f2))
+		}
+		else {
+			let e1 := deeper(e)
+			let id := e1.next
+			let alts := [t, t(tok_unk(pair("s", pair(u, id)))), pair(tok_unk(pair("l", pair(u, id))), tok_unk(pair("r", pair(u, id))))]
+			each(alts, fuel, {alt, fl} => cont(assign(bump(e1), u, alt), fl))
+		}
+	}
+
+/// does `f` have the same else-branch for both stem and fork (disp's `if` shape)?
+is_if_triage :: Tree -> Bool := {f} =>
+	if (is_triage(f)) {
+		let st := f.fst.snd
+		let fk := f.snd
+		(k_shaped(st)) && ((k_shaped(fk)) && ((k_shaped(fk.snd)) && (st.snd == fk.snd.snd)))
+	} else { false }
+
+/// record `call == true` in context (including equality unification when `call` is `Eq`)
+learn_true :: {e : SCtx, f : Tree, x : Tree} -> SCtx :=>
+	if ((is_fork(f)) && (f.fst == "Eq")) {
+		let a := value(e, f.snd)
+		let b := value(e, x)
+		let e1 := record_sym_eq(e, a, b)
+		if ((is_unk(a)) && (not(occurs(a, resolve(e1, b))))) { assign(e1, a, b) }
+		else if ((is_unk(b)) && (not(occurs(b, resolve(e1, a))))) { assign(e1, b, a) }
+		else { e1 }
+	} else { record_eq(e, f, x, true) }
+
+/// does a raw tree contain `tok_fault`? (used after unwrapping seals in `fault_free`)
+rec has_raw_fault :: {v : Tree} -> Bool :=>
+	if (is_fault(v)) { true }
+	else if (is_leaf(v)) { false }
+	else if (is_stem(v)) { has_raw_fault(stem_child(v)) }
+	else if (v.fst == tok_sig) { false }
+	else { (has_raw_fault(v.fst)) || (has_raw_fault(v.snd)) }
+
+/// symbolic step-bounded run for `m_advance(m_start(f, x), steps)`
+rec eval_bound :: {e : SCtx, fuel : Nat, mach : Tree, steps : Nat, k : Tree} -> Tree :=>
+	if (m_finished(mach)) { k(e, fuel, machine_done(m_result(mach))) }
+	else if (is_zero(steps)) { k(e, fuel, mach) }
+	else if (is_zero(fuel)) { "Out of fuel" }
+	else {
+		let f := value(e, mach.m_fn)
+		let x := value(e, mach.m_arg)
+		let stack := mach.m_stack
+		if (is_leaf(f)) { eval_bound(e, fuel, s_deliver(e, t(x), stack), steps, k) }
+		else if (is_stem(f)) {
+			if (stem_child(f) == tok_sig) { "Builds a token" }
+			else { eval_bound(e, fuel, s_deliver(e, t(stem_child(f), x), stack), steps, k) }
+		}
+		else if ((is_triage(f)) && (is_unk(x))) {
+			if (f == shape_identity) { eval_bound(e, nat_pred(fuel), s_deliver(e, x, stack), nat_pred(steps), k) }
+			else { split_unk(e, nat_pred(fuel), x, false, {e2, fl} => eval_bound(e2, fl, machine_run(f, value(e2, x), stack), steps, k)) }
+		}
+		else if ((is_unk(f)) || ((is_fork(f)) && (is_unk(f.fst)))) { "Stuck inside bounded run" }
+		else {
+			let next_m := s_step(e, f, x, stack)
+			if (m_blocked(next_m)) { "Blocked inside bounded run" }
+			else { eval_bound(e, nat_pred(fuel), next_m, nat_pred(steps), k) }
+		}
+	}
+
+/// fast free settling: runs leaf/stem builds without ticking fuel or rebuilding SCtx
+rec s_settle :: {e : SCtx, m : Tree} -> Tree :=>
+	if (m.fst == "Run") {
+		let f := m.m_fn
+		if (is_leaf(f)) { s_settle(e, s_deliver(e, t(m.m_arg), m.m_stack)) }
+		else if (is_stem(f)) {
+			if (stem_child(f) == tok_sig) { pair("Forge", t) }
+			else { s_settle(e, s_deliver(e, t(stem_child(f), m.m_arg), m.m_stack)) }
+		}
+		else { m }
+	} else { m }
+
+/// handle blocked S-tail laziness splits (separated from hot loop)
+s_blocked_step :: {go : Tree, e : SCtx, fuel : Nat, mach : Tree, pend : List(Tree)} -> Tree :=> {
+	let q := mach.snd.fst
+	let v := mach.snd.snd.fst
+	let stack := mach.snd.snd.snd
+	let f1 := nat_pred(fuel)
+	if (q.fst == "lazy") {
+		split_unk(e, f1, q.snd, true, {e2, fl} => go(e2, fl, s_deliver(e2, value(e2, v), stack), pend))
+	}
+	else if (q.fst == "read") {
+		split_unk(e, f1, q.snd, false, {e2, fl} => go(e2, fl, s_deliver(e2, value(e2, v), stack), pend))
+	}
+	else { "Stuck on unknown laziness" }
+}
+
+/// handle machine-recognized ops (separated from hot loop so plain steps stay tiny)
+s_op_step2 :: {go : Tree, e : SCtx, f1 : Nat, ot : Tree, ov : Tree, x : Tree, stack : List(Tree), pend : List(Tree)} -> Tree :=>
+	if (ot == "Sure") {
+		let e_sure := sctx(e.known, e.eqs, e.sym_eqs, [], e.lemmas, e.strict, e.depth, e.next, true)
+		go(e_sure, f1, machine_run(ov, x, cons(pair("EndSure", pair(e.sure, e.recs)), stack)), [])
+	}
+	else if (ot == "Self") {
+		let subj := ov.snd
+		if ((e.sure) || (not(is_fix_fn(subj)))) { go(e, f1, machine_run(subj, x, stack), pend) }
+		else { go(e, f1, machine_run(subj, x, stack), cons(pair(subj, ov.fst), pend)) }
+	}
+	else if (ot == "Pred") {
+		if (is_unk(x)) {
+			let r := lookup(e.eqs, pair(ov, x))
+			if (is_found(r)) { go(e, f1, s_deliver(e, r.snd, stack), pend) }
+			else { go(e, f1, s_deliver(e, tok_call(ov, x), stack), pend) }
+		}
+		else { go(e, f1, machine_run(ov, x, stack), pend) }
+	}
+	else if (ot == "Teq") {
+		let eqr := eq_val(e, ov, x)
+		if (eqr == "True") { go(e, f1, s_deliver(e, true, stack), pend) }
+		else if (eqr == "False") { go(e, f1, s_deliver(e, false, stack), pend) }
+		else if ((is_fork(eqr)) && (eqr.fst == "Blame")) { go(e, f1, machine_run(eqr.snd, ov, stack), pend) }
+		else { go(e, f1, s_deliver(e, tok_call(pair("Eq", ov), x), stack), pend) }
+	}
+	else if (ot == "Adv") {
+		if ((not(has_tok(ov))) && (not(has_tok(x)))) { go(e, f1, s_deliver(e, m_advance(ov, x), stack), pend) }
+		else if (has_tok(x)) { "Step bound is not concrete" }
+		else { eval_bound(e, f1, ov, x, {e2, fl, mres} => go(e2, fl, s_deliver(e2, mres, stack), pend)) }
+	}
+	else { go(e, f1, s_deliver(e, x, stack), pend) }
+
+s_op_step :: {go : Tree, e : SCtx, f1 : Nat, f0 : Tree, x : Tree, stack : List(Tree), pend : List(Tree)} -> Tree :=> {
+	let ot := op_tag(f0)
+	let ov := op_val(f0)
+	if (ot == "Pos") { go(e, f1, s_deliver(e, is_fault(x), stack), pend) }
+	else if (ot == "Seal") { go(e, f1, machine_run(ov.snd, x, stack), pend) }
+	else if (ot == "SealK") { go(e, f1, s_deliver(e, ov.snd, stack), pend) }
+	else if (ot == "Brand") {
+		let key := ov.fst
+		let mine := ov.snd.fst
+		let yours := ov.snd.snd
+		if (is_fault(mine)) {
+			if ((is_brand(x)) && (key_eq(e, brand_key(x), key))) { go(e, f1, s_deliver(e, brand_inner(x), stack), pend) }
+			else { go(e, f1, machine_run(mine, x, stack), pend) }
+		}
+		else if (is_hang(mine)) { go(e, f1, s_deliver(e, tok_brand(key, yours, x), stack), pend) }
+		else { go(e, f1, s_deliver(e, x, stack), pend) }
+	}
+	else if (ot == "Key") { go(bump(e), f1, s_deliver(e, tok_key(e.next), stack), pend) }
+	else { s_op_step2(go, e, f1, ot, ov, x, stack, pend) }
+}
+
+/// fire a recursive hypothesis or lemma `T` on `f0(x)`
+s_use_hyp :: {go : Tree, e : SCtx, f1 : Nat, tag : Tree, f0 : Tree, T : Tree, x : Tree, stack : List(Tree), pend : List(Tree)} -> Tree :=> {
+	let u_h := tok_unk(pair(tag, pair(f0, resolve(e, x))))
+	go(e, f1, machine_run(T, tok_hang, cons(fr_to(tok_fault), cons(fr_to(u_h), cons(fr_to(x), stack)))), pend)
+}
+
+/// handle S-head (`is_stem(f0.fst)`): fast-paths plain S, delegates ops/recs/lemmas/fix
+s_stem_step :: {go : Tree, e : SCtx, f1 : Nat, f0 : Tree, x0 : Tree, stack : List(Tree), pend : List(Tree)} -> Tree :=>
+	if (f0.fst == op_sig) { s_op_step(go, e, f1, f0, value(e, x0), stack, pend) }
+	else if (f0 == tok_hang) { if (e.sure) { "Family may not finish" } else { done(f1) } }
+	else if (f0 == tree_eq) { go(e, f1, s_deliver(e, teq_part(value(e, x0)), stack), pend) }
+	else if (f0 == m_advance) { go(e, f1, s_deliver(e, adv_part(value(e, x0)), stack), pend) }
+	else if ((not(e.sure)) && ((not(e.recs.is_nil)) && (is_found(lookup(e.recs, f0))))) {
+		s_use_hyp(go, e, f1, "rec", f0, lookup(e.recs, f0).snd, value(e, x0), stack, pend)
+	}
+	else if ((not(e.sure)) && ((not(e.lemmas.is_nil)) && ((is_found(lookup(e.lemmas, f0))) && (has_tok(value(e, x0)))))) {
+		s_use_hyp(go, e, f1, "lem", f0, lookup(e.lemmas, f0).snd, value(e, x0), stack, pend)
+	}
+	else if (is_unk(value(e, x0))) {
+		let x := value(e, x0)
+		let eq_r := lookup(e.eqs, pair(f0, x))
+		if (is_found(eq_r)) { go(e, f1, s_deliver(e, eq_r.snd, stack), pend) }
+		else if ((f0.fst == fix_sig) && (not(pend.any({p} => p.fst == f0)))) {
+			go(e, f1, s_deliver(e, tok_call(f0, x), stack), pend)
+		}
+		else {
+			let e2 := activate(e, pend)
+			let c := stem_child(f0.fst)
+			if (k_shaped(c)) { go(e2, f1, s_deliver(e2, c.snd, cons(fr_s(f0.snd, x0), stack)), []) }
+			else { go(e2, f1, machine_run(c, x0, cons(fr_s(f0.snd, x0), stack)), []) }
+		}
+	}
+	else {
+		let e2 := activate(e, pend)
+		let c := stem_child(f0.fst)
+		if (k_shaped(c)) { go(e2, f1, s_deliver(e2, c.snd, cons(fr_s(f0.snd, x0), stack)), []) }
+		else { go(e2, f1, machine_run(c, x0, cons(fr_s(f0.snd, x0), stack)), []) }
+	}
+
+/// handle token in function position (`f.fst == tok_sig`)
+s_tok_step :: {go : Tree, ff : Tree, e : SCtx, f1 : Nat, f : Tree, x : Tree, stack : List(Tree), pend : List(Tree)} -> Tree :=> {
+	let kd := tok_kind(f)
+	if (kd == "Fault") { pair("Fault", resolve(e, x)) }
+	else if (kd == "EndSure") {
+		let prev := tok_val(f)
+		let e_rest := sctx(e.known, e.eqs, e.sym_eqs, prev.snd, e.lemmas, e.strict, e.depth, e.next, prev.fst)
+		go(e_rest, f1, s_deliver(e_rest, x, stack), pend)
+	}
+	else if (kd == "Brand") { go(e, f1, machine_run(brand_blame(f), f, stack), pend) }
+	else if (kd == "Call") {
+		let c_fn := tok_val(f).fst
+		if ((is_fix_fn(c_fn)) || (is_call(c_fn))) { go(e, f1, s_deliver(e, tok_call(f, x), stack), pend) }
+		else { and_then(ff(e, f1, x), {f2} => go(e, f2, s_deliver(e, tok_unk(pair("app", pair(f, resolve(e, x)))), stack), pend)) }
+	}
+	else {
+		and_then(ff(e, f1, x), {f2} => go(e, f2, s_deliver(e, tok_unk(pair("app", pair(f, resolve(e, x)))), stack), pend))
+	}
+}
+
+/// handle `f.fst` being an op or token (seal/brand/unk/call head in triage position)
+s_special_head :: {go : Tree, e : SCtx, f1 : Nat, f : Tree, x : Tree, stack : List(Tree), pend : List(Tree)} -> Tree :=>
+	if (is_seal(f.fst)) { go(e, f1, machine_run(seal_blame(f.fst), f.fst, stack), pend) }
+	else if (is_seal_k(f.fst)) { go(e, f1, machine_run(seal_k_blame(f.fst), f.fst, stack), pend) }
+	else if (is_brand(f.fst)) { go(e, f1, machine_run(brand_blame(f.fst), f.fst, stack), pend) }
+	else if (is_unk(f.fst)) {
+		split_unk(e, f1, f.fst, false, {e2, fl} => go(e2, fl, machine_run(pair(value(e2, f.fst), f.snd), x, stack), pend))
+	}
+	else { "Stuck on neutral head" }
+
+/// handle triaging a neutral `tok_call`
+s_call_triage :: {go : Tree, e : SCtx, f1 : Nat, f : Tree, x : Tree, stack : List(Tree), pend : List(Tree)} -> Tree :=> {
+	let cf := tok_val(x).fst
+	let cx := tok_val(x).snd
+	if (is_if_triage(f)) {
+		let e_true := learn_true(e, cf, cx)
+		and_then(go(e_true, f1, s_deliver(e_true, f.fst.fst, stack), pend), {f2} => {
+			let e_f := record_eq(e, cf, cx, false)
+			go(e_f, f2, machine_run(f.fst.snd, t, stack), pend)
+		})
+	}
+	else if (is_zero(e.depth)) { "Out of depth" }
+	else {
+		let e_true := learn_true(deeper(e), cf, cx)
+		and_then(go(e_true, f1, s_deliver(e_true, f.fst.fst, stack), pend), {f2} => {
+			let e_f := record_eq(deeper(e), cf, cx, false)
+			let ws := tok_unk(pair("cs", e_f.next))
+			let wl := tok_unk(pair("cl", e_f.next))
+			let wr := tok_unk(pair("cr", e_f.next))
+			let e_b := bump(e_f)
+			and_then(go(e_b, f2, machine_run(f.fst.snd, ws, stack), pend), {f3} =>
+				go(e_b, f3, machine_run(f.snd, wl, cons(fr_to(wr), stack)), pend))
+		})
+	}
+}
+
+/// handle triaging an op or token argument `x`
+s_special_arg :: {go : Tree, e : SCtx, f1 : Nat, f : Tree, x : Tree, stack : List(Tree), pend : List(Tree)} -> Tree :=>
+	if (is_seal(x)) { go(e, f1, machine_run(seal_blame(x), x, stack), pend) }
+	else if (is_seal_k(x)) { go(e, f1, machine_run(seal_k_blame(x), x, stack), pend) }
+	else if (is_brand(x)) { go(e, f1, machine_run(brand_blame(x), x, stack), pend) }
+	else if (is_unk(x)) { split_unk(e, f1, x, false, {e2, fl} => go(e2, fl, machine_run(f, value(e2, x), stack), pend)) }
+	else if (is_call(x)) { s_call_triage(go, e, f1, f, x, stack, pend) }
+	else { go(activate(e, pend), f1, machine_run(f.snd, x.fst, cons(fr_to(x.snd), stack)), []) }
+
+/// handle fork-head (`is_fork(f0.fst)`): fast-paths plain triage, delegates tokens/special heads/args
+s_fork_step :: {go : Tree, ff : Tree, e : SCtx, f1 : Nat, f0 : Tree, x0 : Tree, stack : List(Tree), pend : List(Tree)} -> Tree :=> {
+	let f := value(e, f0)
+	if (not(f == f0)) { go(e, succ(f1), machine_run(f, x0, stack), pend) }
+	else {
+		let x := value(e, x0)
+		if (f.fst == tok_sig) { s_tok_step(go, ff, e, f1, f, x, stack, pend) }
+		else if ((f.fst.fst == op_sig) || (f.fst.fst == tok_sig)) { s_special_head(go, e, f1, f, x, stack, pend) }
+		else if ((not(e.sure)) && ((not(e.recs.is_nil)) && (is_found(lookup(e.recs, f))))) {
+			s_use_hyp(go, e, f1, "rec", f, lookup(e.recs, f).snd, x, stack, pend)
+		}
+		else if ((not(e.sure)) && ((not(e.lemmas.is_nil)) && ((is_found(lookup(e.lemmas, f))) && (has_tok(x))))) {
+			s_use_hyp(go, e, f1, "lem", f, lookup(e.lemmas, f).snd, x, stack, pend)
+		}
+		else if (f == shape_identity) { go(activate(e, pend), f1, s_deliver(e, x, stack), []) }
+		else if (is_leaf(x)) { go(activate(e, pend), f1, s_deliver(e, f.fst.fst, stack), []) }
+		else if (is_stem(x)) { go(activate(e, pend), f1, machine_run(f.fst.snd, stem_child(x), stack), []) }
+		else if ((x.fst == op_sig) || (x.fst == tok_sig)) { s_special_arg(go, e, f1, f, x, stack, pend) }
+		else { go(activate(e, pend), f1, machine_run(f.snd, x.fst, cons(fr_to(x.snd), stack)), []) }
+	}
+}
+
+/// tiny core loop: closes over `(ff, k)` once; normal K/S/triage steps stay tiny
+s_go_loop :: {ff : Tree, k : Tree} -> Tree :=> fix({go, e, fuel, mach0, pend} => {
+	let mach := s_settle(e, mach0)
+	if (m_finished(mach)) { k(e, fuel, m_result(mach)) }
+	else if (is_zero(fuel)) { "Out of fuel" }
+	else if (mach.fst == "Run") {
+		let f0 := mach.m_fn
+		let f1 := nat_pred(fuel)
+		if (is_leaf(f0.fst)) { go(activate(e, pend), f1, s_deliver(e, f0.snd, mach.m_stack), []) }
+		else if (is_stem(f0.fst)) { s_stem_step(go, e, f1, f0, mach.m_arg, mach.m_stack, pend) }
+		else { s_fork_step(go, ff, e, f1, f0, mach.m_arg, mach.m_stack, pend) }
+	}
+	else if (mach.fst == "Forge") { "Builds a token" }
+	else { s_blocked_step(go, e, fuel, mach, pend) }
+})
+
+rec fault_free :: {e : SCtx, fuel : Nat, v0 : Tree} -> Tree :=> {
+	let v := value(e, v0)
+	if (is_leaf(v)) { done(fuel) }
+	else if (is_stem(v)) { fault_free(e, fuel, stem_child(v)) }
+	else if (v.fst == tok_sig) {
+		let kd := tok_kind(v)
+		if (kd == "Fault") { "Fault value escaped" }
+		else if (kd == "Brand") {
+			if (is_hang(brand_blame(v))) { fault_free(e, fuel, brand_inner(v)) }
+			else { "Branded value with fault blame escaped" }
+		}
+		else { done(fuel) }
+	}
+	else if (v.fst == op_sig) {
+		let ot := op_tag(v)
+		if (ot == "Seal") {
+			if (is_hang(seal_blame(v))) {
+				let u := tok_unk(pair("arg", e.next))
+				s_go_loop(fault_free, fault_free)(bump(e), fuel, m_start(seal_body(v), u), [])
+			}
+			else { "Sealed with fault blame escaped" }
+		}
+		else if (ot == "SealK") {
+			if (is_hang(seal_k_blame(v))) { fault_free(e, fuel, seal_k_val(v)) }
+			else { "K-sealed with fault blame escaped" }
+		}
+		else if (not(has_raw_fault(v))) { done(fuel) }
+		else { and_then(fault_free(e, fuel, v.fst), {f2} => fault_free(e, f2, v.snd)) }
+	}
+	else if (not(has_raw_fault(v))) { done(fuel) }
+	else { and_then(fault_free(e, fuel, v.fst), {f2} => fault_free(e, f2, v.snd)) }
+}
+
+s_go := s_go_loop(fault_free, fault_free)
+
+// ---------------------------------------------------------------- checker entrypoints
+check_fuel := 15000
+check_depth := 4
+start_ctx :: {lemmas : List(Tree)} -> SCtx :=> sctx([], [], [], [], lemmas, [], check_depth, 0, false)
+
+/// check `v` at wrapper `T` with verified `lemmas`: returns `yes`, or a reason why not
+start_app :: {T : Tree, mine : Tree, yours : Tree, v : Tree} -> Tree :=>
+	machine_run(T, mine, [fr_to(yours), fr_to(v)])
+why :: {lemmas : List(Tree), T : Tree, v : Tree} -> Tree :=>
+	if (has_tok(v)) { "Contains a token" }
+	else if (has_tok(T)) { "Contains a token" }
+	else if (has_tok(lemmas)) { "Contains a token" }
+	else if (not(lemmas.all({l} => is_yes(s_go(start_ctx([]), check_fuel, start_app(l.snd, tok_fault, tok_hang, l.fst), []))))) { "A lemma does not check" }
+	else {
+		let r := s_go(start_ctx(lemmas), check_fuel, start_app(T, tok_fault, tok_hang, v), [])
+		if (is_yes(r)) { yes } else { r }
+	}
+accepts :: {T : Tree, v : Tree} -> Bool :=> why([], T, v) == yes
+
+// ---------------------------------------------------------------- refuter (meaning): De Morgan dual
+// Runs `T(tok_fault, tok_hang)(f)` on the concrete sealed machine and searches observations
+// (`pair` = OR, `seal(hang)` = some raw input from `tried(n)`) for any path hitting `tok_fault`.
+rec r_deliver :: {v : Tree, stack : List(Tree)} -> Tree :=>
+	if (stack.is_nil) { machine_done(v) }
+	else {
+		let fr := stack.head
+		let rest := stack.tail
+		if (fr.fst == "To") { machine_run(v, fr.snd, rest) }
+		else if (fr.fst == "Res") { machine_run(fr.snd, v, rest) }
+		else if (k_shaped(fr.snd.fst)) { machine_run(v, fr.snd.fst.snd, rest) }
+		else if (not(is_fork(v))) { machine_run(fr.snd.fst, fr.snd.snd, cons(fr_res(v), rest)) }
+		else if (is_leaf(v.fst)) { r_deliver(v.snd, rest) }
+		else if ((v.fst == op_sig) && (op_tag(v) == "SealK")) { r_deliver(seal_k_val(v), rest) }
+		else { machine_run(fr.snd.fst, fr.snd.snd, cons(fr_res(v), rest)) }
+	}
+rec r_settle :: {m : Tree} -> Tree :=>
+	if (m.fst == "Run") {
+		let f := m.m_fn
+		if (is_leaf(f)) { r_settle(r_deliver(t(m.m_arg), m.m_stack)) }
+		else if (is_stem(f)) {
+			if (stem_child(f) == tok_sig) { "Stop" }
+			else { r_settle(r_deliver(t(stem_child(f), m.m_arg), m.m_stack)) }
+		}
+		else { m }
+	} else { m }
+
+r_op_step :: {go : Tree, f : Tree, x : Tree, stack : List(Tree), s2 : Nat, key_id : Nat} -> Tree :=> {
+	let ot := op_tag(f)
+	let ov := op_val(f)
+	if (ot == "Pos") { go(r_deliver(is_fault(x), stack), s2, key_id) }
+	else if (ot == "Seal") { go(machine_run(ov.snd, x, stack), s2, key_id) }
+	else if (ot == "SealK") { go(r_deliver(ov.snd, stack), s2, key_id) }
+	else if (ot == "Brand") {
+		let key := ov.fst
+		let mine := ov.snd.fst
+		let yours := ov.snd.snd
+		if (is_fault(mine)) {
+			if ((is_brand(x)) && (brand_key(x) == key)) { go(r_deliver(brand_inner(x), stack), s2, key_id) }
+			else { go(machine_run(mine, x, stack), s2, key_id) }
+		}
+		else if (is_hang(mine)) { go(r_deliver(tok_brand(key, yours, x), stack), s2, key_id) }
+		else { go(r_deliver(x, stack), s2, key_id) }
+	}
+	else if (ot == "Key") { go(r_deliver(tok_key(key_id), stack), s2, succ(key_id)) }
+	else if (ot == "Sure") { go(machine_run(ov, x, stack), s2, key_id) }
+	else if (ot == "Self") { go(machine_run(ov.snd, x, stack), s2, key_id) }
+	else if (ot == "Pred") { go(machine_run(ov, x, stack), s2, key_id) }
+	else if (ot == "Teq") {
+		if (is_seal(ov)) { go(machine_run(seal_blame(ov), ov, stack), s2, key_id) }
+		else if (is_seal(x)) { go(machine_run(seal_blame(x), x, stack), s2, key_id) }
+		else if (is_seal_k(ov)) { go(machine_run(seal_k_blame(ov), ov, stack), s2, key_id) }
+		else if (is_seal_k(x)) { go(machine_run(seal_k_blame(x), x, stack), s2, key_id) }
+		else if (is_brand(ov)) { go(machine_run(brand_blame(ov), ov, stack), s2, key_id) }
+		else if (is_brand(x)) { go(machine_run(brand_blame(x), x, stack), s2, key_id) }
+		else { go(r_deliver(tree_eq(ov, x), stack), s2, key_id) }
+	}
+	else if (ot == "Adv") { go(r_deliver(m_advance(ov, x), stack), s2, key_id) }
+	else { go(r_deliver(x, stack), s2, key_id) }
+}
+
+r_fork_step :: {go : Tree, f : Tree, x : Tree, stack : List(Tree), s2 : Nat, key_id : Nat} -> Tree :=>
+	if (f.fst == tok_sig) {
+		let kd := tok_kind(f)
+		if (kd == "Fault") { pair("Hit", x) }
+		else if (kd == "Brand") { go(machine_run(brand_blame(f), f, stack), s2, key_id) }
+		else { "Stop" }
+	}
+	else if (is_seal(f.fst)) { go(machine_run(seal_blame(f.fst), f.fst, stack), s2, key_id) }
+	else if (is_seal_k(f.fst)) { go(machine_run(seal_k_blame(f.fst), f.fst, stack), s2, key_id) }
+	else if (is_brand(f.fst)) { go(machine_run(brand_blame(f.fst), f.fst, stack), s2, key_id) }
+	else if (f == shape_identity) { go(r_deliver(x, stack), s2, key_id) }
+	else if (is_leaf(x)) { go(r_deliver(f.fst.fst, stack), s2, key_id) }
+	else if (is_stem(x)) { go(machine_run(f.fst.snd, stem_child(x), stack), s2, key_id) }
+	else if (is_seal(x)) { go(machine_run(seal_blame(x), x, stack), s2, key_id) }
+	else if (is_seal_k(x)) { go(machine_run(seal_k_blame(x), x, stack), s2, key_id) }
+	else if (is_brand(x)) { go(machine_run(brand_blame(x), x, stack), s2, key_id) }
+	else { go(machine_run(f.snd, x.fst, cons(fr_to(x.snd), stack)), s2, key_id) }
+
+/// run the sealed concrete machine for at most `steps` (tiny hot loop)
+rec r_run :: {mach0 : Tree, steps : Nat, key_id : Nat} -> Tree :=> {
+	let mach := r_settle(mach0)
+	if (m_finished(mach)) { pair("Val", pair(m_result(mach), key_id)) }
+	else if ((is_zero(steps)) || (mach == "Stop")) { "Stop" }
+	else {
+		let f := mach.m_fn
+		let x := mach.m_arg
+		let stack := mach.m_stack
+		let s2 := nat_pred(steps)
+		if (is_leaf(f.fst)) { r_run(r_deliver(f.snd, stack), s2, key_id) }
+		else if (is_stem(f.fst)) {
+			if (f.fst == op_sig) { r_op_step(r_run, f, x, stack, s2, key_id) }
+			else if (f == tok_hang) { "Stop" }
+			else if (f == tree_eq) { r_run(r_deliver(teq_part(x), stack), s2, key_id) }
+			else if (f == m_advance) { r_run(r_deliver(adv_part(x), stack), s2, key_id) }
+			else {
+				let c := stem_child(f.fst)
+				if (k_shaped(c)) { r_run(r_deliver(c.snd, cons(fr_s(f.snd, x), stack)), s2, key_id) }
+				else { r_run(machine_run(c, x, cons(fr_s(f.snd, x), stack)), s2, key_id) }
+			}
+		}
+		else { r_fork_step(r_run, f, x, stack, s2, key_id) }
+	}
+}
+
+/// existentially observe a value for any reachable `tok_fault`
+rec observe :: {v : Tree, xs : List(Tree), steps : Nat, key_id : Nat, depth : Nat} -> Tree :=>
+	if (is_zero(depth)) { nothing }
+	else if (is_fault(v)) { found(v) }
+	else if (is_seal(v)) {
+		if (is_fault(seal_blame(v))) { found(v) }
+		else if (is_hang(seal_blame(v))) {
+			first_found(xs, {x} => {
+				let r := r_run(m_start(seal_body(v), x), steps, key_id)
+				if (r.fst == "Hit") { found(pair(x, r.snd)) }
+				else if (r.fst == "Val") {
+					let o := observe(r.snd.fst, xs, steps, r.snd.snd, nat_pred(depth))
+					if (is_found(o)) { found(pair(x, o.snd)) } else { nothing }
+				}
+				else { nothing }
+			})
+		}
+		else { nothing }
+	}
+	else if (is_seal_k(v)) {
+		if (is_fault(seal_k_blame(v))) { found(v) }
+		else if (is_hang(seal_k_blame(v))) { observe(seal_k_val(v), xs, steps, key_id, nat_pred(depth)) }
+		else { nothing }
+	}
+	else if (is_brand(v)) {
+		if (is_fault(brand_blame(v))) { found(v) }
+		else { observe(brand_inner(v), xs, steps, key_id, nat_pred(depth)) }
+	}
+	else if (is_tok(v)) { nothing }
+	else if (is_leaf(v)) { nothing }
+	else if (is_stem(v)) { observe(stem_child(v), xs, steps, key_id, nat_pred(depth)) }
+	else {
+		let l := observe(v.fst, xs, steps, key_id, nat_pred(depth))
+		if (is_found(l)) { l } else { observe(v.snd, xs, steps, key_id, nat_pred(depth)) }
+	}
+
+/// test whether `T` refutes `f` within budget `n`
+refute_at :: {T : Tree, f : Tree, n : Nat} -> Tree :=>
+	if ((has_tok(T)) || (has_tok(f))) { found("Contains a token") }
+	else {
+		let steps := twice(twice(twice(twice(n))))
+		let r := r_run(start_app(T, tok_fault, tok_hang, f), steps, 0)
+		if (r.fst == "Hit") { found(r.snd) }
+		else if (r.fst == "Val") { observe(r.snd.fst, tried(n), steps, r.snd.snd, 4) }
+		else { nothing }
+	}
+
+/// test whether a specific input `x` refutes `f` at `T` (useful for testing targeted exploits)
+refute_with :: {T : Tree, f : Tree, x : Tree, steps : Nat} -> Tree :=>
+	if ((has_tok(T)) || ((has_tok(f)) || (has_tok(x)))) { found("Contains a token") }
+	else {
+		let r := r_run(start_app(T, tok_fault, tok_hang, f), steps, 0)
+		if (r.fst == "Hit") { found(r.snd) }
+		else if (r.fst == "Val") { observe(r.snd.fst, [x], steps, r.snd.snd, 4) }
+		else { nothing }
+	}
+
+/// unoptimized meaning as one program: halts with a counterexample iff `m` is not a member
+rec search_from :: {T : Tree, m : Tree, n : Nat} -> Tree :=> {
+	let r := refute_at(T, m, n)
+	if (is_found(r)) { r.snd } else { search_from(T, m, twice(n)) }
+}
+unoptimized :: {T : Tree} -> Tree :=> {m} => search_from(T, m, 1)
+
+/// soundness of checker `O` at `T` as a refuter itself
+sound_refuter :: {T : Tree} -> Tree :=> {O, n} =>
+	first_found(tried(n), {m} => if (O(m)) { let c := refute_at(T, m, n); if (is_found(c)) { found(pair(m, c.snd)) } else { nothing } } else { nothing })
+
+// ================================================================ standard wrappers (plain functions!)
+// None of these are registered anywhere; every one is a self-contained program.
+
+/// any decidable/recursive predicate as a type
+data :: {p : Tree} -> Tree :=> {mine, yours} => {v} =>
+	if (is_pos(mine)) { if (p(v)) { v } else { mine(v) } }
+	else { if (pred_fn(p)(v)) { v } else { mine(v) } }
+AnyT :: Tree := {mine, yours} => {v} => v
+EmptyT :: Tree := {mine, yours} => {v} => mine(v)
+UnitT :: Tree := data(is_leaf)
+
+/// function type: swaps handlers for input, seals closure against triage
+fn :: {A : Tree, B : Tree} -> Tree :=> fix({T, mine, yours, f} => {
+	let call := if (is_pos(mine)) { self_fn(T, f) } else { f }
+	seal(yours, {c} => {
+		let a := A(yours, mine)(c)
+		let r := call(a)
+		B(mine, yours)(r)
+	})
+})
+
+/// K-skip-preserving function type: checks B eagerly on K-shaped constants and keeps K-laziness
+fn_lazy :: {A : Tree, B : Tree} -> Tree :=> fix({T, mine, yours, f} =>
+	if (k_shaped(f)) {
+		seal_k(yours, B(mine, yours)(f.snd))
+	}
+	else {
+		let call := if (is_pos(mine)) { self_fn(T, f) } else { f }
+		seal(yours, {c} => {
+			let a := A(yours, mine)(c)
+			let r := call(a)
+			B(mine, yours)(r)
+		})
+	})
+
+/// dependent function type: `fam` is run in `sure_fn` when negative so diverging families cannot cheat;
+/// `wait` sequences `call(a)` strictly before `run_fam(a)` so induction hypotheses enter scope first
+pi :: {A : Tree, fam : Tree} -> Tree :=> fix({T, mine, yours, f} => {
+	let call := if (is_pos(mine)) { self_fn(T, f) } else { f }
+	let run_fam := if (is_pos(mine)) { fam } else { sure_fn(fam) }
+	seal(yours, {c} => {
+		let a := A(yours, mine)(c)
+		let r := call(a)
+		wait({a0, r0} => run_fam(a0)(mine, yours)(r0), a, r)
+	})
+})
+
+/// dependent pair type
+sigma :: {A : Tree, fam : Tree} -> Tree :=> {mine, yours} => {p} =>
+	if (is_fork(p)) {
+		let a := A(mine, yours)(p.fst)
+		let run_fam := if (is_pos(mine)) { fam } else { sure_fn(fam) }
+		pair(a, run_fam(a)(mine, yours)(p.snd))
+	}
+	else { mine(p) }
+
+/// refinement type: members of `A` where `p` holds
+refine :: {A : Tree, p : Tree} -> Tree :=> {mine, yours} => {v} => {
+	let a := A(mine, yours)(v)
+	if (p(a)) { a } else { mine(a) }
+}
+
+/// singleton type: the unique member of `A` equal to `target`
+the :: {A : Tree, target : Tree} -> Tree :=> refine(A, {v} => v == target)
+
+/// propositional equality wrapper: `t` when `a == b` (`wait` delays `==` until `v` is supplied)
+eq_w :: {a : Tree, b : Tree} -> Tree :=> {mine, yours} => {v} =>
+	wait({p, u} => if (p.fst == p.snd) { u } else { mine(u) }, pair(a, b), UnitT(mine, yours)(v))
+
+/// container wrapper for lists (works even on lists of functions like `ListW(NN)`)
+ListW :: {A : Tree} -> Tree :=> {mine, yours} => fix({self, xs} =>
+	if (is_leaf(xs)) { xs }
+	else if (is_fork(xs)) { pair(A(mine, yours)(xs.fst), self(xs.snd)) }
+	else { mine(xs) })
+
+/// parametric polymorphism over a type `X : Type` (dynamic brand sealing)
+forall :: {F : Tree} -> Tree :=> {mine, yours} => {f} =>
+	if (is_pos(mine)) {
+		seal(yours, {x} => {
+			let B := brand_w(fresh_key(x))
+			F(B)(mine, yours)(f(B))
+		})
+	}
+	else {
+		seal(yours, wait({f0, X} => F(X)(mine, yours)(f0(seal(mine, mine))), f))
+	}
+
+/// higher-kinded polymorphism over a 1-arg type operator / family `P : A -> Type`
+forall_fam :: {F : Tree} -> Tree :=> {mine, yours} => {f} =>
+	if (is_pos(mine)) {
+		seal(yours, {x} => {
+			let k := fresh_key(x)
+			let P := {a} => brand_w(pair(k, a))
+			F(P)(mine, yours)(f(P))
+		})
+	}
+	else {
+		seal(yours, wait({f0, P} => F(P)(mine, yours)(f0(seal(mine, mine))), f))
+	}
+
+/// step-bounded (total + complexity) function type
+bounded :: {A : Tree, B : Tree, bound : Tree} -> Tree :=> {mine, yours} => {f} =>
+	seal(yours, {c} => {
+		let a := A(yours, mine)(c)
+		let m := m_advance(m_start(f, a), bound(a))
+		if (m_finished(m)) { B(mine, yours)(m_result(m)) } else { mine(pair(a, "slow")) }
+	})
+
+/// intensional checked-code domain (recovers Goal 5's checker-domain behavior on demand!)
+checked_by :: {T : Tree} -> Tree :=> data({v} => accepts(T, v))

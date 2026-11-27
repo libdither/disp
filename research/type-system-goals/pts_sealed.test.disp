@@ -1,0 +1,263 @@
+// Recreating lib/theories/{cube,system_t,mltt}.test.disp directly on sealed.disp.
+//
+// Zero ASTs, zero typing rules, zero eliminator tables: every type (STLC, System F,
+// type operators, LF, F-omega, lambda-P2, CoC impredicative Leibniz equality, System T
+// Ackermann, MLTT induction, dependent pairs, and algebraic data types) is a plain disp
+// wrapper checked by the single bare-unknown evaluator in sealed.disp.
+//
+// What stays intentionally outside behavioral wrappers (matching system_t.test.disp L45-49):
+//   1. Barendregt's 8 syntactic sort walls (`power(corner(extra))`),
+//   2. Predicative universe stratification (`srt(0) : srt(0)`),
+//   3. Unbounded termination without a step bound (Goal 1 forbids unbounded halting as a meaning;
+//      step-bounded totality is expressible directly via `bounded`).
+open use raw "../../lib/prelude.disp" {}
+open use raw "../../lib/list.disp" {}
+open use raw "sealed.disp" {}
+
+// Shared first-order data predicates (constructors derived on the fly by `derive_cases`)
+rec NatP :: {v : Tree} -> Bool :=> if (is_leaf(v)) { true } else if (is_fork(v)) { if (is_leaf(v.fst)) { NatP(v.snd) } else { false } } else { false }
+BitP :: {v : Tree} -> Bool :=> if (is_leaf(v)) { true } else if (is_stem(v)) { is_leaf(stem_child(v)) } else { false }
+
+Nat := data(NatP)
+Bit := data(BitP)
+NN := fn(Nat, Nat)
+NNN := fn(Nat, NN)
+
+// Generic MLTT tagged data-type predicate builder (mirrors lib/theories/types.disp `data_t`,
+// with zero trusted code: `derive_cases` extracts constructors and recursive fields directly).
+rec args_pred :: {kinds : List(Tree)} -> Tree :=>
+	if (kinds.is_nil) { {_self, v} => is_leaf(v) }
+	else {
+		let here := if (kinds.head == "Rec") { {self} => self } else { {_self} => kinds.head }
+		let rest := args_pred(kinds.tail)
+		{self, v} => if (is_fork(v)) { if (here(self)(v.fst)) { rest(self, v.snd) } else { false } } else { false }
+	}
+rec ctor_pred :: {shapes : List(List(Tree))} -> Tree :=>
+	if (shapes.is_nil) { {_self, _tag, _args} => false }
+	else {
+		let here := args_pred(shapes.head)
+		let rest := ctor_pred(shapes.tail)
+		{self, tag, args} => if (is_leaf(tag)) { here(self, args) } else if (is_fork(tag)) { if (is_leaf(tag.fst)) { rest(self, tag.snd, args) } else { false } } else { false }
+	}
+data_pred :: {shapes : List(List(Tree))} -> Tree :=> {
+	let check := ctor_pred(shapes)
+	fix({self, v} => if (is_fork(v)) { check(self, v.fst, v.snd) } else { false })
+}
+data_desc :: {shapes : List(List(Tree))} -> Tree :=> data(data_pred(shapes))
+
+// ================================================================ 1. Lambda Cube (cube.test.disp)
+Base := Nat
+Other := Bit
+
+// ---- STLC: simple functions, composition, self-application rejected & refuted
+id_base := {x} => x
+id_base_ty := fn(Base, Base)
+test accepts(id_base_ty, id_base) = true
+
+compose := {f, g, x} => f(g(x))
+compose_ty := fn(fn(Other, Base), fn(fn(Base, Other), fn(Base, Base)))
+test accepts(compose_ty, compose) = true
+test compose({b} => if (b) { 1 } else { 0 }, is_zero, 0) = 1
+// swapped function types fail both checker and refuter
+bad_compose_ty := fn(fn(Base, Other), fn(fn(Other, Base), fn(Base, Base)))
+test accepts(bad_compose_ty, compose) = false
+test is_found(refute_at(bad_compose_ty, compose, 64)) = true
+// omega: self-application passes a sealed function where Base is expected
+omega_term := {x} => x(x)
+test accepts(fn(fn(Base, Base), Base), omega_term) = false
+test is_found(refute_at(fn(fn(Base, Base), Base), omega_term, 64)) = true
+
+// ---- System F: parametric polymorphism and Church encodings
+poly_id := {X, x} => x
+poly_id_ty := forall({X} => fn(X, X))
+test accepts(poly_id_ty, poly_id) = true
+
+church_nat := forall({X} => fn(fn(X, X), fn(X, X)))
+church_two := {X, f, x} => f(f(x))
+church_plus := {m, n, X, f, x} => m(X, f, n(X, f, x))
+test accepts(church_nat, church_two) = true
+test accepts(fn(church_nat, fn(church_nat, church_nat)), church_plus) = true
+test church_plus(church_two, church_two, Nat, succ, 0) = 4
+
+church_bool := forall({X} => fn(X, fn(X, X)))
+yes_term := {X, a, _b} => a
+stray := {X, _a, _b} => Other
+test accepts(church_bool, yes_term) = true
+test accepts(church_bool, stray) = false
+test is_found(refute_at(church_bool, stray, 64)) = true
+
+// ---- Type operators: wrappers compute as ordinary disp functions
+twice_op := {X} => fn(X, X)
+endo_base := twice_op(Base)
+test accepts(fn(endo_base, id_base_ty), {f} => f) = true
+
+// ---- LF (dependent types): types depending on terms
+family := {_x} => Other
+same_fam := {_x, y} => y
+test accepts(pi(Base, {x} => fn(family(x), family(x))), same_fam) = true
+test accepts(pi(Base, {_x} => fn(Other, Other)), same_fam) = true
+test accepts(pi(Base, {_x} => fn(Other, Base)), same_fam) = false
+test is_found(refute_at(pi(Base, {_x} => fn(Other, Base)), same_fam, 64)) = true
+
+// ---- System F-omega: type operators + polymorphism (Church pairs & poly_op)
+pair_op := {A, B} => forall({R} => fn(fn(A, fn(B, R)), R))
+mk_pair := {A, B, a, b, R, k} => k(a, b)
+mk_pair_ty := forall({A} => forall({B} => fn(A, fn(B, pair_op(A, B)))))
+test accepts(mk_pair_ty, mk_pair) = true
+test mk_pair(Nat, Nat, 3, 4, Nat, {a, _b} => a) = 3
+test mk_pair(Nat, Nat, 3, 4, Nat, {_a, b} => b) = 4
+
+poly_op := {F, X, x} => x
+poly_op_ty := forall_fam({F} => forall({X} => fn(F(X), F(X))))
+test accepts(poly_op_ty, poly_op) = true
+
+// ---- lambda-P2: dependent types + polymorphism over predicates (Leibniz equality on Base)
+eq_base := {x, y} => forall_fam({P} => fn(P(x), P(y)))
+refl_base := {x, P, px} => px
+test accepts(pi(Base, {x} => eq_base(x, x)), refl_base) = true
+wrong_refl := {x, y, P, px} => px
+test accepts(pi(Base, {x} => pi(Base, {y} => eq_base(x, y))), wrong_refl) = false
+test is_found(refute_at(pi(Base, {x} => pi(Base, {y} => eq_base(x, y))), wrong_refl, 64)) = true
+trans_base := {x, y, z, xy, yz, P, px} => yz(P, xy(P, px))
+trans_ty := pi(Base, {x} => pi(Base, {y} => pi(Base, {z} => fn(eq_base(x, y), fn(eq_base(y, z), eq_base(x, z))))))
+test accepts(trans_ty, trans_base) = true
+poly_family := {P, x, px} => px
+test accepts(forall_fam({P} => pi(Base, {x} => fn(P(x), P(x)))), poly_family) = true
+
+// ---- lambda-P-omega-under: operators building predicates from predicates
+imp_self := {P, x} => fn(P(x), P(x))
+built := {x} => imp_self(family, x)
+use_built := {x, f} => f
+test accepts(pi(Base, {x} => fn(built(x), fn(Other, Other))), use_built) = true
+test accepts(pi(Base, {x} => fn(built(x), fn(Other, Base))), use_built) = false
+
+// ---- Calculus of Constructions: impredicative Leibniz equality & symmetry over ANY type A
+leibniz := {A, x, y} => forall_fam({P} => fn(P(x), P(y)))
+refl_any := {A, x, P, px} => px
+refl_any_ty := forall({A} => pi(A, {x} => leibniz(A, x, x)))
+test accepts(refl_any_ty, refl_any) = true
+sym_any := {A, x, y, xy} => xy({z} => leibniz(A, z, x), refl_any(A, x))
+sym_any_ty := forall({A} => pi(A, {x} => pi(A, {y} => fn(leibniz(A, x, y), leibniz(A, y, x)))))
+test accepts(sym_any_ty, sym_any) = true
+// converse direction fails at the same term!
+bad_sym_ty := forall({A} => pi(A, {x} => pi(A, {y} => fn(leibniz(A, x, y), leibniz(A, x, x)))))
+test accepts(bad_sym_ty, sym_any) = false
+
+// ================================================================ 2. System T (system_t.test.disp)
+// Polymorphic recursor checked ONCE as a plain function (zero special `iter` rule in checker!)
+nat_iter := {A, z, s} => fix({self, n} => if (is_zero(n)) { z } else { s(nat_pred(n), self(nat_pred(n))) })
+IterT := forall({A} => fn(A, fn(fn(Nat, fn(A, A)), fn(Nat, A))))
+test accepts(IterT, nat_iter) = true
+
+plus_t := {n} => nat_iter(Nat, n, {_k, r} => succ(r))
+times_t := {n} => nat_iter(Nat, 0, {_k, r} => plus_t(n, r))
+// Ackermann's function: nested higher-order recursion (outer `nat_iter` at `NN`, inner at `Nat`)!
+ack_t := {m} => nat_iter(NN, {n} => succ(n), {_k, f} => {n} => nat_iter(Nat, f(1), {_j, r} => f(r), n), m)
+
+test accepts(NNN, plus_t) = true
+test why([pair(plus_t, NNN)], NNN, times_t) = yes
+test accepts(NNN, ack_t) = true
+test plus_t(2, 3) = 5
+test times_t(3, 3) = 9
+test ack_t(2, 2) = 7
+
+// wrong return type & self-application on Nat are rejected and refuted
+lie := {_a, b} => b
+test accepts(NN, lie) = false
+test is_found(refute_at(NN, lie, 64)) = true
+test accepts(NN, {n} => n(n)) = false
+test is_found(refute_at(NN, {n} => n(n), 16)) = true
+// step-bounded totality via `bounded`: O(1) `plus_t(n, 2)` fits constant bound 500; O(n) `plus_t(2, n)` does not!
+test accepts(bounded(Nat, Nat, {_a} => 500), {n} => plus_t(n, 2)) = true
+test accepts(bounded(Nat, Nat, {_a} => 500), {n} => plus_t(2, n)) = false
+
+// ================================================================ 3. MLTT (mltt.test.disp)
+// Dependent induction on Nat checked ONCE as a plain function!
+nat_ind := {P, z, s} => fix({self, n} => if (is_zero(n)) { z } else { s(nat_pred(n), self(nat_pred(n))) })
+NatIndT := forall_fam({P} => fn(P(0), fn(pi(Nat, {k} => fn(P(k), P(succ(k)))), pi(Nat, P))))
+test accepts(NatIndT, nat_ind) = true
+
+// Transport along propositional equality `eq_w` on Nat checked ONCE as a plain function!
+transport_nat := {P, _x, _y, _eq, d} => d
+TransportNatT := forall_fam({P} => pi(Nat, {x} => pi(Nat, {y} => fn(eq_w(x, y), fn(P(x), P(y))))))
+test accepts(TransportNatT, transport_nat) = true
+
+// Concrete recursive addition for equational reasoning
+rec plus_n :: {a : Tree, b : Tree} -> Tree :=> if (is_zero(a)) { b } else { succ(plus_n(nat_pred(a), b)) }
+test accepts(NNN, plus_n) = true
+
+// 0 + n = n holds by computing (reflexivity suffices)
+test accepts(pi(Nat, {n} => eq_w(plus_n(0, n), n)), {_n} => t) = true
+
+// n + 0 = n needs induction: bare reflexivity is refused, induction is accepted!
+plus_zero_ty := pi(Nat, {n} => eq_w(plus_n(n, 0), n))
+test accepts(plus_zero_ty, {_n} => t) = false
+plus_zero_direct := nat_ind({n} => eq_w(plus_n(n, 0), n), t, {_k, ih} => ih)
+test accepts(plus_zero_ty, plus_zero_direct) = true
+
+// False statement: n + n = n has no proof and is refuted at 1!
+false_ty := pi(Nat, {n} => eq_w(plus_n(n, n), n))
+test accepts(false_ty, {_n} => t) = false
+test is_found(refute_at(false_ty, {_n} => t, 64)) = true
+plus_self_bad := nat_ind({n} => eq_w(plus_n(n, n), n), t, {_k, ih} => ih)
+test accepts(false_ty, plus_self_bad) = false
+test is_found(refute_at(false_ty, plus_self_bad, 64)) = true
+
+// For-all-exists as a program: witness + equality evidence
+double_spec := pi(Nat, {n} => sigma(Nat, {m} => eq_w(m, plus_n(n, n))))
+double_proof := {n} => pair(plus_n(n, n), t)
+test why([pair(plus_n, NNN)], double_spec, double_proof) = yes
+test double_proof(3).fst = 6
+// wrong witness fails both checker and refuter
+test accepts(double_spec, {n} => pair(n, t)) = false
+test is_found(refute_at(double_spec, {n} => pair(n, t), 64)) = true
+
+// ---- MLTT Data Type 1: Booleans (`bool_d := [[], []]`)
+bool_d := [[], []]
+BoolD := data_desc(bool_d)
+b_yes := pair(0, [])
+b_no := pair(1, [])
+flip := {b} => if (is_zero(b.fst)) { b_no } else { b_yes }
+test accepts(fn(BoolD, BoolD), flip) = true
+flip_twice := pi(BoolD, {b} => eq_w(flip(flip(b)), b))
+test accepts(flip_twice, {_b} => t) = true
+test accepts(pi(BoolD, {b} => eq_w(flip(b), b)), {_b} => t) = false
+
+// ---- MLTT Data Type 2: Lists of Nats (`list_d := [[], [NatP, "Rec"]]`)
+list_d := [[], [NatP, "Rec"]]
+ListD := data_desc(list_d)
+l_empty := pair(0, [])
+l_push := {h, rest} => pair(1, [h, rest])
+pair_list := l_push(0, l_push(2, l_empty))
+test accepts(ListD, pair_list) = true
+// note: l_empty = pair(0, []) = pair(t, t) = 1 structurally IS a Nat; a non-empty list is not
+test accepts(ListD, l_push(pair_list, l_empty)) = false
+test accepts(ListD, pair(1, [l_empty, t])) = false
+test accepts(ListD, pair(1, [0])) = false
+test accepts(ListD, pair(5, [])) = false
+
+rec len_d :: {xs : Tree} -> Tree :=> if (is_zero(xs.fst)) { 0 } else { succ(len_d(xs.snd.tail.head)) }
+test accepts(fn(ListD, Nat), len_d) = true
+test len_d(pair_list) = 2
+test accepts(eq_w(len_d(pair_list), 2), t) = true
+
+rec append_d :: {xs : Tree, ys : Tree} -> Tree :=>
+	if (is_zero(xs.fst)) { ys } else { l_push(xs.snd.head, append_d(xs.snd.tail.head, ys)) }
+test accepts(fn(ListD, fn(ListD, ListD)), append_d) = true
+
+// Induction on ListD: append(xs, empty) = xs
+append_empty_ty := pi(ListD, {xs} => eq_w(append_d(xs, l_empty), xs))
+test accepts(append_empty_ty, {_xs} => t) = false
+rec append_empty :: {xs : Tree} -> Tree :=>
+	if (is_zero(xs.fst)) { t } else { append_empty(xs.snd.tail.head) }
+test accepts(append_empty_ty, append_empty) = true
+
+// ---- MLTT Data Type 3: Binary Trees (`tree_d := [[], ["Rec", "Rec"]]`)
+tree_d := [[], ["Rec", "Rec"]]
+TreeD := data_desc(tree_d)
+t_tip := pair(0, [])
+t_fork := {l, r} => pair(1, [l, r])
+rec size_d :: {tr : Tree} -> Tree :=>
+	if (is_zero(tr.fst)) { 1 } else { succ(plus_n(size_d(tr.snd.head), size_d(tr.snd.tail.head))) }
+test why([pair(plus_n, NNN)], fn(TreeD, Nat), size_d) = yes
+test size_d(t_fork(t_tip, t_fork(t_tip, t_tip))) = 5
