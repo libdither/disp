@@ -2,11 +2,11 @@
 // confirmer, and the rule lenses judging stands on.
 open use raw "../prelude.disp" {}
 open use raw "../core/list.disp" {}
-open use raw "../stream.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../trees.disp" {}
+open use raw "../core/stream.disp" {}
+open use raw "../core/verdict.disp" {}
+open use raw "../core/machine.disp" {}
+open use raw "../core/claim.disp" {}
+open use raw "../core/trees.disp" {}
 open use raw "../tests/fixtures.disp" {}
 open use raw "../confirm.disp" {}
 open use raw "../rules.disp" {}

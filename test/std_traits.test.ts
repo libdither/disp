@@ -118,4 +118,22 @@ open use "std.disp"
 List.map := { new := {_xs, _f} => []; proof := {xs, _f} => if (xs.is_nil) { t } else { t } }
 `)).toThrow(/rejected by its guard/)
   }, 180000)
+
+  it("lib/growth.opt.disp reconciles in BOTH open orders and rejects buggy sizes_upto", () => {
+    const specSz = getBinding(`open use "growth.disp"\n`, "sizes_upto")
+    const optSz = getBinding(`open use "growth.opt.disp"\n`, "sizes_upto")
+    expect(session.equal!(specSz, optSz)).toBe(false)
+
+    const order1 = getBinding(`open use "growth.disp"\nopen use "growth.opt.disp"\n`, "sizes_upto")
+    const order2 = getBinding(`open use "growth.opt.disp"\nopen use "growth.disp"\n`, "sizes_upto")
+    expect(session.equal!(order1, optSz)).toBe(true)
+    expect(session.equal!(order2, optSz)).toBe(true)
+
+    expect(() => run(`
+open use "std.disp"
+open use "growth.disp"
+let rec bad_sz := {k} => if (is_zero(k)) { [] } else { cons(k, bad_sz(nat_pred(k))) }
+sizes_upto := { new := bad_sz; proof := {k} => if (is_zero(k)) { t } else { t } }
+`)).toThrow(/rejected by its guard/)
+  }, 180000)
 })

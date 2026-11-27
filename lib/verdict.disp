@@ -1,22 +1,40 @@
-// A verdict on a claim: "Proved", `refuted w` with a witness that re-runs
-// concretely, or Open (bare "Open", or `open_on reason` when there is something
-// to say: a probe count, a stuck symbol). A Refuted is a fact about every tree;
-// a Proved is one only when it came from exhausting a finite domain or from a
-// shortcut whose contract is agreement with the honest stream (TYPES.html §9).
-open use raw "prelude.disp" {}
+// Checked verdict type (`Verdict`: `Proved`, `Refuted(w)`, `Open`, `OpenOn(reason)`)
+// with Rust-style `PascalCase` constructors and safe `Option`-returning accessors.
+open use "kernel/prelude.disp"
+open use "option.disp"
 
-refuted :: {witness : Tree} -> Verdict :=> pair("Refuted", witness)
-counterexample := {v} => v.snd
-open_on :: {reason : Tree} -> Verdict :=> pair("Open", reason)
-is_proved :: Verdict -> Bool := {v} => v == "Proved"
-is_refuted :: Verdict -> Bool := {v} => v.fst == "Refuted"
-is_open :: Verdict -> Bool := {v} => (v == "Open") || (v.fst == "Open")
-// the plain vocabulary: Proved | Refuted w | Open
-flat :: Verdict -> Verdict := {v} => if (v.is_open) { "Open" } else { v }
-// a shortcut against an enumerated run: Proved needs the run to pass, Refuted
-// needs it to fail, Open is consistent with either
-agrees :: {verdict : Verdict, enumerated : Bool} -> Bool :=>
-	if (verdict.is_proved) { enumerated } else if (verdict.is_open) { true } else { not(enumerated) }
-// two verdicts agree unless one proves what the other refutes
-agree :: {a : Verdict, b : Verdict} -> Bool :=>
-	if (a.is_open) { true } else if (b.is_open) { true } else { a.is_proved == b.is_proved }
+let VerdictP := {v} =>
+	if (v == "Proved") { true }
+	else if (v == "Open") { true }
+	else if (is_fork(v)) { (v.fst == "Refuted") || (v.fst == "Open") }
+	else { false }
+
+Verdict : Type := Refine(Tree, VerdictP)
+
+Proved : Verdict := "Proved"
+Open : Verdict := "Open"
+Refuted : Tree -> Verdict := {witness} => pair("Refuted", witness)
+OpenOn : Tree -> Verdict := {reason} => pair("Open", reason)
+
+Verdict.is_proved : Verdict -> Bool := {v} => v == "Proved"
+Verdict.is_refuted : Verdict -> Bool := {v} => (is_fork(v)) && (v.fst == "Refuted")
+Verdict.is_open : Verdict -> Bool := {v} => (v == "Open") || ((is_fork(v)) && (v.fst == "Open"))
+
+Verdict.counterexample : Verdict -> Option(Tree) := {v} =>
+	if ((is_fork(v)) && (v.fst == "Refuted")) { Some(v.snd) } else { None }
+
+Verdict.reason : Verdict -> Option(Tree) := {v} =>
+	if ((is_fork(v)) && (v.fst == "Open")) { Some(v.snd) } else { None }
+
+Verdict.flat : Verdict -> Verdict := {v} =>
+	if (Verdict.is_open(v)) { Open } else { v }
+
+Verdict.agrees_with : Verdict -> Bool -> Bool := {v, enumerated} =>
+	if (Verdict.is_proved(v)) { enumerated }
+	else if (Verdict.is_open(v)) { true }
+	else { not(enumerated) }
+
+Verdict.agrees : Verdict -> Verdict -> Bool := {a, b} =>
+	if (Verdict.is_open(a)) { true }
+	else if (Verdict.is_open(b)) { true }
+	else { Verdict.is_proved(a) == Verdict.is_proved(b) }

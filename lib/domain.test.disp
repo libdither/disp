@@ -1,0 +1,106 @@
+// End-to-end auto-verification & runtime tests for Disp's migrated domain libraries:
+// `verdict.disp`, `machine.disp`, `trees.disp`, `growth.disp` (+ `growth.opt.disp`),
+// `stream.disp`, and `claim.disp`.
+open use "std.disp"
+open use "verdict.disp"
+open use "machine.disp"
+open use "trees.disp"
+open use "growth.disp"
+open use "stream.disp"
+open use "claim.disp"
+
+// Capture growth specs before applying verified `.opt.disp` overlay
+let sizes_spec := sizes_upto
+let all_zero_spec := all_zero
+let degree_spec := degree
+
+open use "growth.opt.disp"
+
+// ---- 1. Verdict (`Proved`, `Refuted`, `Open`, `OpenOn`, safe `Option` accessors)
+test Proved.is_proved = true
+test Proved.is_refuted = false
+test Proved.is_open = false
+test Refuted(7).is_refuted = true
+test Refuted(7).counterexample = Some(7)
+test Proved.counterexample = None
+test Open.is_open = true
+test OpenOn("fuel").is_open = true
+test OpenOn("fuel").reason = Some("fuel")
+test Open.reason = None
+test OpenOn("fuel").flat = Open
+test Proved.agrees(Open) = true
+test Proved.agrees(Refuted(0)) = false
+test Proved.agrees_with(true) = true
+test Refuted(0).agrees_with(false) = true
+
+// ---- 2. Machine & Trees
+test Machine.start({x} => succ(x), 2).advance(20).is_finished = true
+test Machine.start({x} => succ(x), 2).advance(20).result = Some(3)
+test Machine.start({x} => succ(x), 2).result = None
+test is_cert(machine_cert) = true
+test Trees.is_bool(true) = true
+test Trees.is_bool(t(t, t)) = false
+test Trees.next_level([[t]]) = [t(t)]
+
+// ---- 3. Growth & verified `growth.opt.disp` O(k^2) -> O(k) speedup
+test sizes_upto(0) = []
+test sizes_upto(5) = [1, 2, 3, 4, 5]
+test sizes_upto(6) = sizes_spec(6)
+test diffs([1, 3, 6]) = Some([2, 3])
+test diffs([5, 3]) = None
+test all_zero([0, 0, 0]) = true
+test all_zero([0, 1, 0]) = false
+test degree([2, 3, 4]) = 2
+test newton([2, 4, 6, 8]) = Some([2, 2])
+test newton_at([2, 2], 4) = 10
+test steps_of({x} => succ(x), 2, 20).is_some = true
+test fit(sizes_upto, 5, 5000).map(degree) = Some(1)
+test fit(sizes_spec, 5, 5000).map(degree) = Some(2)
+test cheaper(fit(sizes_upto, 5, 5000).unwrap_or([]), fit(sizes_spec, 5, 5000).unwrap_or([])) = true
+test nat_lt(steps_of(sizes_upto, 8, 20000).unwrap_or(99999), steps_of(sizes_spec, 8, 20000).unwrap_or(0)) = true
+test nat_lt(steps_of(all_zero, [0, 0, 0, 0, 0, 0], 20000).unwrap_or(99999), steps_of(all_zero_spec, [0, 0, 0, 0, 0, 0], 20000).unwrap_or(0)) = true
+test nat_lt(steps_of(degree, [1, 2, 3, 4, 5, 6], 20000).unwrap_or(99999), steps_of(degree_spec, [1, 2, 3, 4, 5, 6], 20000).unwrap_or(0)) = true
+
+// ---- 4. Stream, Poll, Step, Task, Items, Stopping, Worklist
+test Yield(3).is_yield = true
+test Yield(3).map(succ).value = Some(4)
+test Skip.is_skip = true
+test Skip.value = None
+test Yield(0).filter(is_succ).is_skip = true
+test Finished(7).is_finished = true
+test Finished(7).result = Some(7)
+test Finished(7).next = None
+test Running(2).map(succ).next = Some(3)
+test Exhausted.to_verdict = Proved
+test Spent.to_verdict = Open
+test SpentOn("cap").to_verdict = OpenOn("cap")
+
+let s1 := Items.from_list([1, 2, 3])
+test Taken.items(Items.take(s1, 2)) = [1, 2]
+test Items.collect(Items.map(s1, succ)) = [2, 3, 4]
+test Items.all(s1, is_succ) = true
+test Items.ending(s1) = Exhausted
+test Items.verdict(Items.from_list([])) = Proved
+test Items.verdict(Items.from_list([9])) = Refuted(9)
+test Taken.items(Items.take(Stream.as_items(Stream.nats), 3)) = [0, 1, 2]
+test Items.collect(Items.worklist({x} => Yield(succ(x)), [1, 2])) = [2, 3]
+test Items.collect(Task.answers(Task.of_call({x} => succ(x), 2, 10))) = [3]
+test Items.collect(Stopping.settle(Stopping.from_list([4, 5]))) = [4, 5]
+test is_cert(stopping_list_cert) = true
+test is_cert(worklist_cert) = true
+test is_cert(merge_with_cert) = true
+
+// ---- 5. Claim, Lens, CallChallenge, Option-typed CEGIS
+let eq_zero := {w, c} => is_zero(w) && is_zero(c)
+test Claim.over(eq_zero, 0, [0, 0]) = Proved
+test Claim.over(eq_zero, 1, [0]) = Refuted(0)
+let id_lens := Lens.new({w} => w, {_w, d} => d)
+test id_lens.fwd(3) = 3
+test id_lens.back(3, 5) = 5
+test Lens.holds(eq_zero, eq_zero, id_lens, 0, 0) = true
+test CallChallenge.new(1, 2).arg = 1
+test CallChallenge.new(1, 2).on_result = 2
+test Claim.cegis(Items.from_list([0]), eq_zero, [1, 0], [], 20) = pair(Some(0), [0])
+test Claim.cegis(Items.from_list([0]), eq_zero, [1, 2], [], 20) = pair(None, [0])
+test is_cert(honest_cert) = true
+test is_cert(over_cert) = true

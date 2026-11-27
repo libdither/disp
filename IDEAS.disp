@@ -1,6 +1,6 @@
 open use raw "lib/prelude.disp" {}
 open use raw "lib/core/list.disp" {}
-open use raw "lib/stream.disp" {}
+open use raw "lib/core/stream.disp" {}
 
 next_level :: {levels : List(List(Tree))} -> List(Tree) :=> {
   let stems := levels.head.map({v} => t(v))

@@ -2,7 +2,7 @@
 open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
-open use raw "../growth.disp" {}
+open use raw "../core/growth.disp" {}
 
 within := {f, x, n} => m_advance(m_start(f, x), n)
 // the bounded member test: on a number, the program finishes inside its bound, with a number

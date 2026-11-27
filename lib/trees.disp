@@ -1,25 +1,17 @@
-// Every tree, smallest first, as a stream (a search source), and the Bool
-// recognizer. IDEAS.disp builds the same two while explaining them; this copy
-// carries no tests, so opening it costs nothing.
-open use raw "prelude.disp" {}
-open use raw "core/list.disp" {}
-open use raw "stream.disp" {}
+// Checked tree enumeration stream (`Trees.all`, smallest trees first) and `Trees.is_bool`.
+open use "kernel/prelude.disp"
+let TMod := use raw "core/trees.disp" {}
 
-next_level :: {levels : List(List(Tree))} -> List(Tree) :=> {
-  let stems := levels.head.map({v} => t(v))
-  let splits := levels.reverse.zip(levels.tail)
-  let forks := splits.map({p} => p.fst.cross(p.snd, pair)).concat
-  stems.append(forks)
-}
-trees_step :: {state : Pair(List(List(Tree)), List(Tree))} -> Emit(Tree, Pair(List(List(Tree)), List(Tree))) :=> {
-  let levels := state.fst
-  let pending := state.snd
-  if (pending.is_nil) {
-    let grown := next_level(levels)
-    emit(grown.head, pair(cons(grown, levels), grown.tail))
-  } else {
-    emit(pending.head, pair(levels, pending.tail))
-  }
-}
-Trees :: Stream(Tree) := stream_new(trees_step, pair([[t]], [t]))
-Bool :: {tree : Tree} -> Bool :=> triage(true, is_leaf, {_l, _r} => false, tree)
+let tree_lems := certify(check_depth, check_fuel, "all", [], [
+	pair("rev_ll", pair(List(List(Tree)) -> List(List(Tree)), reverse)),
+	pair("zip_ll", pair(List(List(Tree)) -> List(List(Tree)) -> List(Pair(List(Tree), List(Tree))), zip)),
+	pair("concat_t", pair(List(List(Tree)) -> List(Tree), concat)),
+	pair("cross_t", pair(List(Tree) -> List(Tree) -> (Tree -> Tree -> Tree) -> List(Tree), cross)),
+	pair("append_t", pair(List(Tree) -> List(Tree) -> List(Tree), append))
+])
+let check_module := check_with(check_depth, check_fuel, "all", [tree_lems])
+
+Trees.is_bool : Tree -> Bool := TMod.Bool
+Trees.next_level : List(List(Tree)) -> List(Tree) := TMod.next_level
+Trees.step : Pair(List(List(Tree)), List(Tree)) -> Pair(Tree, Pair(List(List(Tree)), List(Tree))) := TMod.trees_step
+Trees.all : Tree := TMod.Trees

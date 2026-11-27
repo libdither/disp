@@ -1,6 +1,6 @@
 // Positive lifecycle tests for the promoted kernel's declaration guards & verified `.opt.disp` rewrites.
 open use "prelude.disp"
-open use raw "../growth.disp" {}
+open use raw "../core/growth.disp" {}
 
 // ---- 1. Declaration protocol primitives (`default_guard`, `base`, `guard`, `sig`, `freeze`)
 test default_guard(t, base(0)) = Ok(Bind(0))

@@ -69,12 +69,21 @@ export function unwrapTypeExpr(ty: Expr | null | undefined): Expr | null {
   return cur
 }
 
+/// Peel one function argument from a type expression (`A -> B` or `PartialFn(A, B)`).
+function peelOneArg(ty: Expr | null | undefined): Expr | null {
+  const fn = unwrapTypeExpr(ty)
+  if (fn == null) return null
+  if (fn.tag === "binder" && !fn.fat && fn.params.length > 0)
+    return fn.params.length === 1 ? fn.body : { ...fn, params: fn.params.slice(1) }
+  if (fn.tag === "app" && fn.f.tag === "app" && fn.f.f.tag === "var" && fn.f.f.name === "PartialFn")
+    return fn.x
+  return null
+}
+
 /// Strip the leading receiver parameter from a method's declared type (`Option(A) -> (A -> B) -> Option(B)`
 /// → `(A -> B) -> Option(B)`), so chained dot calls (`x.map(f).unwrap_or(d)`) keep knowing the return type.
 export function peelReceiverType(ty: Expr | null | undefined): Expr | null {
-  const fn = unwrapTypeExpr(ty)
-  if (fn == null || fn.tag !== "binder" || fn.fat || fn.params.length === 0) return null
-  return fn.params.length === 1 ? fn.body : { ...fn, params: fn.params.slice(1) }
+  return peelOneArg(ty)
 }
 
 /// a type's head constructor name (`Former`, `List(Nat)` → `"List"`, `Option(A)` → `"Option"`)
@@ -102,11 +111,7 @@ export function typeOf(e: Expr, lookupEntry: (name: string) => ScopeEntry | unde
       const owner = pickOwner(type, e.field, lookupEntry, false)
       return owner ? fieldTypeOf(owner, e.field) : null
     }
-    case "app": {
-      const fn = unwrapTypeExpr(typeOf(e.f, lookupEntry))
-      if (fn == null || fn.tag !== "binder" || fn.fat || fn.params.length === 0) return null
-      return fn.params.length === 1 ? fn.body : { ...fn, params: fn.params.slice(1) }
-    }
+    case "app": return peelOneArg(typeOf(e.f, lookupEntry))
     default: return null
   }
 }

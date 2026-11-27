@@ -2,8 +2,8 @@
 // test line in refuter.test.disp or confirmer.test.disp, run here.
 open use raw "../prelude.disp" {}
 open use raw "../core/list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../stream.disp" {}
+open use raw "../core/verdict.disp" {}
+open use raw "../core/stream.disp" {}
 open use raw "fixtures.disp" {}
 open use raw "../../IDEAS.disp" {}
 open use raw "../confirm.disp" {}

@@ -1,7 +1,7 @@
 // Annotations checked by judge: checked_example.disp loads only if every annotation in it is
 // Proved. Its rejections are load errors, pinned from outside in test/checked.test.ts.
 open use raw "../prelude.disp" {}
-open use raw "../verdict.disp" {}
+open use raw "../core/verdict.disp" {}
 open use raw "../tests/fixtures.disp" {}
 open use raw "../confirm.disp" {}
 open use raw "../rules.disp" {}

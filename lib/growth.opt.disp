@@ -1,0 +1,52 @@
+// Verified single-triage & O(k) optimization overlay for `lib/growth.disp`.
+open use "std.disp"
+open use "growth.disp"
+
+let LN := List(Nat)
+let app_spec := List.append
+
+// 1. `sizes_upto`: O(k) single-triage descending accumulator vs O(k^2) `append([k])` spec
+let rec sizes_acc := {k, acc} =>
+	triage(acc, {_} => acc, {_l, p} => sizes_acc(p, cons(k, acc)), k)
+let c_sizes_acc := certify(check_depth, check_fuel, "fix", [], [
+	pair("sizes_acc", pair(Nat -> LN -> LN, sizes_acc))
+])
+let check_module := check_with(check_depth, check_fuel, "fix", [c_sizes_acc])
+let sizes_fast : Nat -> LN := {k} => sizes_acc(k, [])
+
+let sizes_spec := sizes_upto
+let rec pf_app_nil := {xs} => if (xs.is_nil) { t } else { pf_app_nil(xs.tail) }
+let c_app_nil := certify(check_depth, check_fuel, "all", [], [
+	pair("app_nil", pair({xs : LN} -> Eq(app_spec(xs, []), xs), pf_app_nil))
+])
+let rec pf_app_assoc := {xs, ys, zs} => if (xs.is_nil) { t } else { pf_app_assoc(xs.tail, ys, zs) }
+let c_app_assoc := certify(check_depth, check_fuel, "all", [], [
+	pair("app_assoc", pair({xs : LN} -> {ys : LN} -> {zs : LN} -> Eq(app_spec(app_spec(xs, ys), zs), app_spec(xs, app_spec(ys, zs))), pf_app_assoc))
+])
+let rec pf_sizes_acc := {k, acc} =>
+	if (is_zero(k)) { t }
+	else { seq(pf_sizes_acc(nat_pred(k), cons(k, acc)), pf_app_assoc(sizes_spec(nat_pred(k)), [k], acc)) }
+let c_sizes_inv := certify(check_depth, check_fuel, "all", [c_app_assoc], [
+	pair("sizes_inv", pair({k : Nat} -> {acc : LN} -> Eq(sizes_acc(k, acc), app_spec(sizes_spec(k), acc)), pf_sizes_acc))
+])
+let pf_sizes := {k} => seq(pf_sizes_acc(k, []), pf_app_nil(sizes_spec(k)))
+sizes_upto := { new := sizes_fast; proof := pf_sizes; certs := [c_sizes_inv, c_app_nil] }
+
+// 2. `all_zero`: single-triage short-circuiting 1-arg fix
+let all_zero_fast : LN -> Bool := fix({go, xs} =>
+	triage(true, {_} => true, {h, tl} => if (is_zero(h)) { go(tl) } else { false }, xs))
+let rec pf_all_zero := {xs} =>
+	if (xs.is_nil) { t }
+	else if (is_zero(xs.head)) { pf_all_zero(xs.tail) }
+	else { t }
+all_zero := { new := all_zero_fast; proof := pf_all_zero }
+
+// 3. `degree`: single-triage length minus 1 (avoids triaging `len_fast` call)
+let len_fast := fix({go, xs} => triage(zero, {_} => zero, {_h, tl} => succ(go(tl)), xs))
+let degree_fast : LN -> Nat := {coeffs} => triage(zero, {_} => zero, {_h, tl} => len_fast(tl), coeffs)
+let rec pf_len := {xs} => if (xs.is_nil) { t } else { pf_len(xs.tail) }
+let c_len := certify(check_depth, check_fuel, "all", [], [
+	pair("pf_len", pair({xs : LN} -> Eq(len_fast(xs), List.len(xs)), pf_len))
+])
+let pf_degree := {coeffs} => if (coeffs.is_nil) { t } else { pf_len(coeffs.tail) }
+degree := { new := degree_fast; proof := pf_degree; certs := [c_len] }

@@ -1,230 +1,179 @@
-open use raw "prelude.disp" {}
-open use raw "core/list.disp" {}
-open use raw "machine.disp" {}
-open use raw "verdict.disp" {}
+// Checked coalgebraic stream, task, budget, worklist, and verdict library.
+// Uses `Poll(V)` (`Yield` / `Skip`) so it never collides with `Option(A)` (`Some` / `None`),
+// and namespaces operations cleanly under `Step.*`, `Emit.*`, `Poll.*`, `Ending.*`,
+// `Coalg.*`, `Stream.*`, `Task.*`, `Items.*`, `Stopping.*`, `Taken.*`, and `Round.*`.
+open use "std.disp"
+open use "verdict.disp"
+open use "machine.disp"
+let SMod := use raw "core/stream.disp" {}
 
-c_new :: {fmap : (X -> Y) -> F(X) -> F(Y), stepper : St -> F(St), state : St} -> Coalgebra(F) :=> pair(fmap, pair(stepper, state))
-c_fmap :: Coalgebra(F) -> (X -> Y) -> F(X) -> F(Y) := pair_fst
-c_stepper :: Coalgebra(F) -> St -> F(St) := {c} => c.snd.fst
-c_state :: Coalgebra(F) -> St := {c} => c.snd.snd
-c_with :: {c : Coalgebra(F), state : St} -> Coalgebra(F) :=> c_new(c.c_fmap, c.c_stepper, state)
-c_out :: {c : Coalgebra(F)} -> F(Coalgebra(F)) :=> c.c_fmap(c_with(c), c.c_stepper(c.c_state))
-c_hoist :: {fmap : (X -> Y) -> G(X) -> G(Y), convert : F(X) -> G(X), c : Coalgebra(F)} -> Coalgebra(G) :=>
-	c_new(fmap, {state} => convert(c.c_stepper(state)), c.c_state)
-rec c_fold :: {alg : (Coalgebra(F) -> A) -> F(Coalgebra(F)) -> A} -> {c : Coalgebra(F)} -> A :=> alg(c_fold, c_out(c))
+// ---------------------------------------------------------------- exact dependent types
+Step : Type -> Type -> Type := {R, X} => Sigma(Tree, {tag} => if (tag == "Finished") { R } else { X })
+FinishedStep : Type -> Type := {R} => Pair(The(Tree, "Finished"), R)
+RunningStep : Type -> Type := {X} => Pair(The(Tree, "Running"), X)
+Emit : Type -> Type -> Type := {T, X} => Pair(T, X)
+Poll : Type -> Type := {V} => Sigma(Tree, {tag} => if (tag == "Yield") { V } else { Unit })
+YieldPoll : Type -> Type := {V} => Pair(The(Tree, "Yield"), V)
+Ending : Type := Tree
+ItemStep : Type -> Type -> Type := {V, X} => Step(Ending, Emit(Poll(V), X))
+RunningItemStep : Type -> Type -> Type := {V, X} => Pair(The(Tree, "Running"), Emit(Poll(V), X))
+Budget : Type -> Type := {St} => Pair(Nat, St)
+Outcome : Type -> Type -> Type := {V, I} => Sigma(Tree, {tag} => if (tag == "Yield") { V } else if (tag == "Split") { Pair(Tree, List(I)) } else { Tree })
 
-finished :: {result : R} -> Step(R, X) :=> pair("Finished", result)
-running :: {next : X} -> Step(R, X) :=> pair("Running", next)
-is_finished :: Step(R, X) -> Bool := {step} => step.fst == "Finished"
-finished_result :: Step(R, X) -> R := pair_snd
-running_next :: Step(R, X) -> X := pair_snd
-halt_map :: {transform : X -> Y, step : Step(R, X)} -> Step(R, Y) :=>
-	if (step.is_finished) { step } else { running(transform(step.running_next)) }
-keep_going :: Step(R, Unit) := running(t)
-c_until :: {c : Coalgebra(F), rule : St -> Step(R, Unit)} -> Coalgebra({X} => Step(R, F(X))) :=>
-	c_new({transform} => halt_map(c.c_fmap(transform)), {state} => {
-		let ruling := rule(state)
-		if (ruling.is_finished) { ruling } else { running(c.c_stepper(state)) }
-	}, c.c_state)
-c_after :: {c : Coalgebra(F), rule : F(St) -> Step(R, Unit)} -> Coalgebra({X} => Step(R, F(X))) :=>
-	c_new({transform} => halt_map(c.c_fmap(transform)), {state} => {
-		let stepped := c.c_stepper(state)
-		let ruling := rule(stepped)
-		if (ruling.is_finished) { ruling } else { running(stepped) }
-	}, c.c_state)
-
-emit :: {item : T, next : X} -> Emit(T, X) :=> pair(item, next)
-emitted :: Emit(T, X) -> T := pair_fst
-emit_next :: Emit(T, X) -> X := pair_snd
-emit_map :: {transform : X -> Y, emission : Emit(T, X)} -> Emit(T, Y) :=> emit(emission.emitted, transform(emission.emit_next))
-emit_item_map :: {transform : T -> U, emission : Emit(T, X)} -> Emit(U, X) :=> emit(transform(emission.emitted), emission.emit_next)
-
-yield :: {item : V} -> Option(V) :=> pair("Yield", item)
-skip :: Option(V) := pair("Skip", t)
-is_yield :: Option(V) -> Bool := {option} => option.fst == "Yield"
-yielded_item :: Option(V) -> V := pair_snd
-option_map :: {transform : V -> W, option : Option(V)} -> Option(W) :=>
-	if (option.is_yield) { yield(transform(option.yielded_item)) } else { option }
-option_filter :: {keep : V -> Bool, option : Option(V)} -> Option(V) :=>
-	if ((option.is_yield) && (not(keep(option.yielded_item)))) { skip } else { option }
-
-exhausted :: Ending := "Exhausted"
-spent :: Ending := "Spent"
-is_exhausted :: Ending -> Bool := {ending} => ending == exhausted
-// spent, saying why
-spent_on :: {reason : Tree} -> Ending :=> pair("Spent", reason)
-is_spent :: Ending -> Bool := {ending} => (ending == spent) || (ending.fst == "Spent")
-item_map :: {transform : X -> Y} -> Step(Ending, Emit(Option(V), X)) -> Step(Ending, Emit(Option(V), Y)) :=> halt_map(emit_map(transform))
-step_draw :: Step(Ending, Emit(Option(V), X)) -> Option(V) := {step} => step.running_next.emitted
-step_rest :: Step(Ending, Emit(Option(V), X)) -> X := {step} => step.running_next.emit_next
-
-stream_new :: {stepper : St -> Emit(T, St), state : St} -> Stream(T) :=> c_new(emit_map, stepper, state)
-task_new :: {stepper : St -> Step(R, St), state : St} -> Task(R) :=> c_new(halt_map, stepper, state)
-s_new :: {stepper : St -> Step(Ending, Emit(Option(V), St)), state : St} -> Items(V) :=> c_new(item_map, stepper, state)
-
-nats :: Stream(Nat) := stream_new({n} => emit(n, succ(n)), zero)
-as_items :: {stream : Stream(V)} -> Items(V) :=>
-	c_hoist(item_map, {emission} => running(emit(yield(emission.emitted), emission.emit_next)), stream)
-s_from_list :: {values : List(V)} -> Items(V) :=>
-	c_until(stream_new({rest} => emit(yield(rest.head), rest.tail), values),
-		{rest} => if (rest.is_nil) { finished(exhausted) } else { keep_going })
-
-s_map :: {items : Items(V), transform : V -> W} -> Items(W) :=>
-	c_hoist(item_map, halt_map(emit_item_map(option_map(transform))), items)
-s_filter :: {items : Items(V), keep : V -> Bool} -> Items(V) :=>
-	c_hoist(item_map, halt_map(emit_item_map(option_filter(keep))), items)
-
-budget :: {fuel : Nat, state : St} -> Budget(St) :=> pair(fuel, state)
-budget_fuel :: Budget(St) -> Nat := pair_fst
-budget_state :: Budget(St) -> St := pair_snd
-c_budgeted :: {c : Coalgebra(F), fuel : Nat} -> Coalgebra(F) :=>
-	c_new(c.c_fmap, {remaining} => c.c_fmap(budget(nat_pred(remaining.budget_fuel)), c.c_stepper(remaining.budget_state)), budget(fuel, c.c_state))
-out_of_fuel :: Budget(St) -> Step(Unit, Unit) := {remaining} => if (is_zero(remaining.budget_fuel)) { finished(t) } else { keep_going }
-c_bounded :: {c : Coalgebra(F), fuel : Nat} -> Coalgebra({X} => Step(Unit, F(X))) :=> c_until(c_budgeted(c, fuel), out_of_fuel)
-budget_ending :: Step(Unit, Step(Ending, Emit(Option(V), X))) -> Step(Ending, Emit(Option(V), X)) :=
-	{step} => if (step.is_finished) { finished(spent) } else { step.running_next }
-bounded :: {items : Items(V), fuel : Nat} -> Bounded(Items(V)) :=> c_hoist(item_map, budget_ending, c_bounded(items, fuel))
-
-stopping :: {items : Items(V), measure : St -> Nat} -> Stopping(V) :=> pair(measure, items)
-stopping_measure :: Stopping(V) -> St -> Nat := pair_fst
-stopping_items :: Stopping(V) -> Items(V) := pair_snd
-stopping_fuel :: Stopping(V) -> Nat := {claim} => succ(claim.stopping_measure(claim.stopping_items.c_state))
-settle :: {claim : Stopping(V)} -> Bounded(Items(V)) :=> claim.stopping_items.bounded(claim.stopping_fuel)
-stopping_map :: {claim : Stopping(V), transform : V -> W} -> Stopping(W) :=>
-	stopping(claim.stopping_items.s_map(transform), claim.stopping_measure)
-stopping_filter :: {claim : Stopping(V), keep : V -> Bool} -> Stopping(V) :=>
-	stopping(claim.stopping_items.s_filter(keep), claim.stopping_measure)
-stopping_list :: {values : List(V)} -> Stopping(V) :=> stopping(s_from_list(values), length)
-
-taken :: {items : List(V), rest : Items(V)} -> Taken(V) :=> pair(items, rest)
-s_items :: Taken(V) -> List(V) := pair_fst
-s_rest :: Taken(V) -> Items(V) := pair_snd
-rec s_take :: {items : Bounded(Items(V)), count : Nat} -> Taken(V) :=>
-	if (is_zero(count)) { taken([], items) }
-	else {
-		let step := c_out(items)
-		if (step.is_finished) { taken([], items) }
-		else if (step.step_draw.is_yield) {
-			let more := s_take(step.step_rest, nat_pred(count))
-			taken(cons(step.step_draw.yielded_item, more.s_items), more.s_rest)
-		}
-		else { s_take(step.step_rest, count) }
-	}
-s_all :: {items : Bounded(Items(V)), holds : V -> Bool} -> Bool :=> c_fold({recurse, step} =>
-	if (step.is_finished) { true }
-	else if (step.step_draw.is_yield) { (holds(step.step_draw.yielded_item)) && (recurse(step.step_rest)) }
-	else { recurse(step.step_rest) }
-, items)
-s_ending :: {items : Bounded(Items(V))} -> Ending :=> c_fold({recurse, step} =>
-	if (step.is_finished) { step.finished_result } else { recurse(step.step_rest) }
-, items)
-
-m_trace :: {machine : Machine, quantum : Nat} -> Stream(Machine) :=> stream_new({paused} => {
-	let advanced := m_advance(paused, quantum)
-	emit(advanced, advanced)
-}, machine)
-task :: {f : Tree, x : Tree, quantum : Nat} -> Task(Tree) :=> c_hoist(halt_map, halt_map(emit_next),
-	c_after(m_trace(m_start(f, x), quantum), {emission} => if (m_finished(emission.emitted)) { finished(m_result(emission.emitted)) } else { keep_going }))
-answers :: {task : Task(R)} -> Items(R) :=> c_until(stream_new({pending} => {
-	let step := c_out(pending.running_next)
-	if (step.is_finished) { emit(yield(step.finished_result), finished(t)) }
-	else { emit(skip, running(step.running_next)) }
-}, running(task)), {pending} => if (pending.is_finished) { finished(exhausted) } else { keep_going })
-task_return :: {result : R} -> Task(R) :=> task_new(finished, result)
-first_phase :: {task : Task(R)} -> Phase(R, S) :=> pair("First", task)
-second_phase :: {task : Task(S)} -> Phase(R, S) :=> pair("Second", task)
-in_second_phase :: Phase(R, S) -> Bool := {phase} => phase.fst == "Second"
-phase_task :: Phase(R, S) -> Tree := pair_snd
-task_then :: {first : Task(R), next : R -> Task(S)} -> Task(S) :=> task_new({phase} => {
-	let step := c_out(phase.phase_task)
-	if (phase.in_second_phase) { halt_map(second_phase, step) }
-	else if (step.is_finished) { halt_map(second_phase, c_out(next(step.finished_result))) }
-	else { halt_map(first_phase, step) }
-}, first_phase(first))
-
-round :: {found : List(V), survivors : List(Items(V)), dropped_spent : Bool} -> Round(V) :=> pair(found, pair(survivors, dropped_spent))
-round_found :: Round(V) -> List(V) := pair_fst
-round_survivors :: Round(V) -> List(Items(V)) := {played} => played.snd.fst
-round_dropped_spent :: Round(V) -> Bool := {played} => played.snd.snd
-advance_head :: {live : List(Items(V))} -> Round(V) :=> {
-	let step := c_out(live.head)
-	if (step.is_finished) { round([], live.tail, step.finished_result.is_spent) }
-	else {
-		let requeued := live.tail.append([step.step_rest])
-		if (step.step_draw.is_yield) { round([step.step_draw.yielded_item], requeued, false) } else { round([], requeued, false) }
-	}
+let RecType := {F} => {
+	let mk := fix({Self, _u} => F(pair(
+		{E, fl, nx, v, k} => Self(v).fst(E, fl, nx, v, k),
+		{u, b, E} => Self(u).snd(u, b, E))))
+	mk(t)
 }
-rec advance_all :: {live : List(Items(V))} -> Round(V) :=>
-	if (live.is_nil) { round([], [], false) }
-	else {
-		let one := advance_head([live.head])
-		let others := advance_all(live.tail)
-		round(one.round_found.append(others.round_found), one.round_survivors.append(others.round_survivors), one.round_dropped_spent || others.round_dropped_spent)
-	}
+CoalgOf := {St, F} => RecType({C} => Pair((St -> C) -> F(St) -> F(C), Pair(St -> F(St), St)))
+ItemsOf := {St, V} => CoalgOf(St, {X} => ItemStep(V, X))
 
-merge_state :: {source : Items(Items(V)), live : List(Items(V)), buffer : List(V), tainted : Bool, ending : Step(Ending, Unit)} -> MergeState(V) :=>
-	pair(source, pair(live, pair(buffer, pair(tainted, ending))))
-merge_source :: MergeState(V) -> Items(Items(V)) := pair_fst
-merge_live :: MergeState(V) -> List(Items(V)) := {st} => st.snd.fst
-merge_buffer :: MergeState(V) -> List(V) := {st} => st.snd.snd.fst
-merge_tainted :: MergeState(V) -> Bool := {st} => st.snd.snd.snd.fst
-merge_ending :: MergeState(V) -> Step(Ending, Unit) := {st} => st.snd.snd.snd.snd
-s_merge_with :: {source : Items(Items(V)), policy : List(Items(V)) -> Round(V)} -> Items(V) :=> c_until(stream_new({st} => {
-	let buffer := st.merge_buffer
-	if (not(buffer.is_nil)) { emit(yield(buffer.head), merge_state(st.merge_source, st.merge_live, buffer.tail, st.merge_tainted, keep_going)) }
-	else {
-		let pulled := c_out(st.merge_source)
-		let source_after := if (pulled.is_finished) { st.merge_source } else { pulled.step_rest }
-		let live_after := if (pulled.is_finished) { st.merge_live }
-			else if (pulled.step_draw.is_yield) { st.merge_live.append([pulled.step_draw.yielded_item]) }
-			else { st.merge_live }
-		if (not(live_after.is_nil)) {
-			let played := policy(live_after)
-			emit(skip, merge_state(source_after, played.round_survivors, played.round_found, st.merge_tainted || played.round_dropped_spent, keep_going))
-		}
-		else if (not(pulled.is_finished)) { emit(skip, merge_state(source_after, [], [], st.merge_tainted, keep_going)) }
-		else if (st.merge_tainted || pulled.finished_result.is_spent) { emit(skip, merge_state(source_after, [], [], true, finished(spent))) }
-		else { emit(skip, merge_state(source_after, [], [], false, finished(exhausted))) }
-	}
-}, merge_state(source, [], [], false, keep_going)), merge_ending)
+let until_item_map := SMod.c_until(SMod.stream_new(test, t), test).fst
+let until_bound_map := SMod.c_until(SMod.s_new(test, t), test).fst
 
-// A work list: settling an item skips it, yields it, notes why it stays open, or splits it
-// into items worked first. `s_steps` is the list at work: each item with what settling it
-// did. It ends exhausted when the list runs out with nothing noted, else spent on the first
-// note. `s_worklist` keeps only what was yielded.
-noted :: {reason : Tree} -> Outcome(V, I) :=> pair("Noted", reason)
-// split, saying on what
-split_on :: {what : Tree, items : List(I)} -> Outcome(V, I) :=> pair("Split", pair(what, items))
-split_into :: {items : List(I)} -> Outcome(V, I) :=> split_on(t, items)
-s_steps :: {settle : I -> Outcome(V, I), start : List(I)} -> Items(Pair(I, Outcome(V, I))) :=> s_new({st} => {
-	let todo := st.fst
-	let notes := st.snd
-	if (todo.is_nil) { finished(if (notes.is_nil) { exhausted } else { spent_on(notes.head) }) }
-	else {
-		let out := settle(todo.head)
-		let rest := if (out.fst == "Split") { pair(out.snd.snd.append(todo.tail), notes) }
-			else if ((out.fst == "Noted") && (notes.is_nil)) { pair(todo.tail, [out.snd]) }
-			else { pair(todo.tail, notes) }
-		running(emit(yield(pair(todo.head, out)), rest))
-	}
-}, pair(start, []))
-// what a work list yielded
-s_yielded :: {steps : Items(Pair(I, Outcome(V, I)))} -> Items(V) :=> steps.s_filter({step} => step.snd.is_yield).s_map({step} => step.snd.yielded_item)
-s_worklist :: {settle : I -> Outcome(V, I), start : List(I)} -> Items(V) :=> s_yielded(s_steps(settle, start))
-// the items of a stream that ends, up to the first that is `last`
-s_upto :: {items : Bounded(Items(V)), last : V -> Bool} -> List(V) :=> c_fold({recurse, step} =>
-	if (step.is_finished) { [] }
-	else if (not(step.step_draw.is_yield)) { recurse(step.step_rest) }
-	else if (last(step.step_draw.yielded_item)) { [step.step_draw.yielded_item] }
-	else { cons(step.step_draw.yielded_item, recurse(step.step_rest)) }
-, items)
-s_list :: {items : Bounded(Items(V))} -> List(V) :=> s_upto(items, {_} => false)
+EmitCoalg := {St, T} => Pair(The(Tree, SMod.emit_map), Pair(St -> Emit(T, St), St))
+TaskCoalg := {St, R} => Pair(The(Tree, SMod.halt_map), Pair(St -> Step(R, St), St))
+ItemCoalg := {St, V} => Pair(The(Tree, SMod.item_map), Pair(St -> ItemStep(V, St), St))
+UntilItemCoalg := {St, V} => Pair(The(Tree, until_item_map), Pair(St -> ItemStep(V, St), St))
+UntilBoundCoalg := {St, V} => Pair(The(Tree, until_bound_map), Pair(St -> Step(Unit, ItemStep(V, St)), St))
+AnyItemCoalg := {St, V} => Pair(Tree, Pair(St -> ItemStep(V, St), St))
 
-// a stream of counterexamples decides a claim by how it goes: one appears (Refuted), the
-// source runs out (Proved), or the budget does (Open, with the reason when there is one)
-ending_verdict :: Ending -> Verdict := {e} => if (e.is_exhausted) { "Proved" } else if (e == spent) { "Open" } else { open_on(e.snd) }
-verdict :: {witnesses : Bounded(Items(Tree))} -> Verdict :=> c_fold({recurse, step} =>
-	if (step.is_finished) { ending_verdict(step.finished_result) }
-	else if (step.step_draw.is_yield) { refuted(step.step_draw.yielded_item) }
-	else { recurse(step.step_rest) }
-, witnesses)
+StoppingOf := {St, V} => Pair(St -> Nat, ItemCoalg(St, V))
+AnyStoppingOf := {St, V} => Pair(St -> Nat, AnyItemCoalg(St, V))
+TakenOf := {St, V} => Pair(List(V), ItemsOf(St, V))
+PhaseOf := {T1, T2} => Sigma(Tree, {tag} => if (tag == "Second") { T2 } else { T1 })
+RoundOf := {St, V} => Pair(List(V), Pair(List(ItemsOf(St, V)), Bool))
+RoundC := {St, V} => Pair(List(V), Pair(List(ItemCoalg(St, V)), Bool))
+MergeStateOf := {S1, S2, V} => Pair(ItemsOf(S1, ItemsOf(S2, V)), Pair(List(ItemsOf(S2, V)), Pair(List(V), Pair(Bool, Step(Ending, Unit)))))
+MergeStateC := {S1, S2, V} => Pair(ItemCoalg(S1, ItemCoalg(S2, V)), Pair(List(ItemCoalg(S2, V)), Pair(List(V), Pair(Bool, Step(Ending, Unit)))))
+
+let machine_lems := cert_pick(machine_cert, ["Machine.start", "Machine.is_finished", "Machine.unwrap_result", "Machine.advance"])
+let length_cert := certify(check_depth, check_fuel, "all", [], [
+	pair("length_t", pair(List(Tree) -> Nat, length))
+])
+let worklist_lems := certify(check_depth, check_fuel, "all", [], [
+	pair("append_t", pair(List(Tree) -> List(Tree) -> List(Tree), append)),
+	pair("s_yielded_t", pair(ItemCoalg(Pair(List(Tree), List(Tree)), Pair(Tree, Outcome(Tree, Tree))) -> ItemCoalg(Pair(List(Tree), List(Tree)), Tree), SMod.s_yielded))
+])
+let merge_lems := certify(check_depth, check_fuel, "all", [], [
+	pair("is_spent", pair(Ending -> Bool, SMod.is_spent)),
+	pair("append_it", pair(List(ItemCoalg(Tree, Tree)) -> List(ItemCoalg(Tree, Tree)) -> List(ItemCoalg(Tree, Tree)), append)),
+	pair("c_out_src", pair(ItemCoalg(Tree, ItemCoalg(Tree, Tree)) -> ItemStep(ItemCoalg(Tree, Tree), ItemCoalg(Tree, ItemCoalg(Tree, Tree))), SMod.c_out))
+])
+
+stopping_list_cert := certify(check_depth, check_fuel, "none", [length_cert], [
+	pair("Stopping.from_list", pair(List(Tree) -> Pair(List(Tree) -> Nat, UntilItemCoalg(List(Tree), Tree)), SMod.stopping_list))
+])
+worklist_cert := certify(check_depth, check_fuel, "all", [worklist_lems], [
+	pair("Items.steps", pair((Tree -> Outcome(Tree, Tree)) -> List(Tree) -> ItemCoalg(Pair(List(Tree), List(Tree)), Pair(Tree, Outcome(Tree, Tree))), SMod.s_steps)),
+	pair("Items.worklist", pair((Tree -> Outcome(Tree, Tree)) -> List(Tree) -> ItemCoalg(Pair(List(Tree), List(Tree)), Tree), SMod.s_worklist))
+])
+merge_with_cert := certify(check_depth, check_fuel, "none", [merge_lems], [
+	pair("Items.merge_with", pair(ItemCoalg(Tree, ItemCoalg(Tree, Tree)) -> (List(ItemCoalg(Tree, Tree)) -> RoundC(Tree, Tree)) -> UntilItemCoalg(MergeStateC(Tree, Tree, Tree), Tree), SMod.s_merge_with))
+])
+
+let check_module := check_with(check_depth, check_fuel, "none", [machine_lems])
+
+// ---------------------------------------------------------------- 1. Step, Emit, Poll, Ending
+Finished : Implicit({R} => Implicit({X} => R -> Step(R, X))) := SMod.finished
+Running : Implicit({R} => Implicit({X} => X -> Step(R, X))) := SMod.running
+Step.is_finished : Implicit({R} => Implicit({X} => Step(R, X) -> Bool)) := SMod.is_finished
+Step.unwrap_result : Implicit({R} => FinishedStep(R) -> R) := SMod.finished_result
+Step.unwrap_next : Implicit({X} => RunningStep(X) -> X) := SMod.running_next
+Step.result : Implicit({R} => Implicit({X} => Step(R, X) -> Option(R))) := {s} => if (s.fst == "Finished") { Some(s.snd) } else { None }
+Step.next : Implicit({R} => Implicit({X} => Step(R, X) -> Option(X))) := {s} => if (s.fst == "Finished") { None } else { Some(s.snd) }
+Step.map : Implicit({R} => Implicit({X} => Implicit({Y} => Step(R, X) -> (X -> Y) -> Step(R, Y)))) := {s, f} => SMod.halt_map(f, s)
+Step.keep_going : Implicit({R} => Step(R, Unit)) := SMod.keep_going
+
+Emit.new : Implicit({T} => Implicit({X} => T -> X -> Emit(T, X))) := SMod.emit
+Emit.item : Implicit({T} => Implicit({X} => Emit(T, X) -> T)) := SMod.emitted
+Emit.next : Implicit({T} => Implicit({X} => Emit(T, X) -> X)) := SMod.emit_next
+Emit.map : Implicit({T} => Implicit({X} => Implicit({Y} => Emit(T, X) -> (X -> Y) -> Emit(T, Y)))) := {e, f} => SMod.emit_map(f, e)
+Emit.map_item : Implicit({T} => Implicit({U} => Implicit({X} => Emit(T, X) -> (T -> U) -> Emit(U, X)))) := {e, f} => SMod.emit_item_map(f, e)
+
+Yield : Implicit({V} => V -> Poll(V)) := SMod.yield
+Skip : Implicit({V} => Poll(V)) := SMod.skip
+Poll.is_yield : Implicit({V} => Poll(V) -> Bool) := SMod.is_yield
+Poll.is_skip : Implicit({V} => Poll(V) -> Bool) := {p} => not(p.fst == "Yield")
+Poll.unwrap : Implicit({V} => YieldPoll(V) -> V) := SMod.yielded_item
+Poll.value : Implicit({V} => Poll(V) -> Option(V)) := {p} => if (p.fst == "Yield") { Some(p.snd) } else { None }
+Poll.map : Implicit({V} => Implicit({W} => Poll(V) -> (V -> W) -> Poll(W))) := {p, f} => SMod.option_map(f, p)
+Poll.filter : Implicit({V} => Poll(V) -> (V -> Bool) -> Poll(V)) := {p, pred} => SMod.option_filter(pred, p)
+
+Exhausted : Ending := SMod.exhausted
+Spent : Ending := SMod.spent
+SpentOn : Tree -> Ending := SMod.spent_on
+Ending.is_exhausted : Ending -> Bool := SMod.is_exhausted
+Ending.is_spent : Ending -> Bool := SMod.is_spent
+Ending.to_verdict : Ending -> Verdict := SMod.ending_verdict
+
+// ---------------------------------------------------------------- 2. Coalgebra core
+Coalg.new : Implicit({St} => Implicit({V} => ((St -> ItemsOf(St, V)) -> ItemStep(V, St) -> ItemStep(V, ItemsOf(St, V))) -> (St -> ItemStep(V, St)) -> St -> ItemsOf(St, V))) := SMod.c_new
+Coalg.fmap : Implicit({St} => Implicit({V} => ItemsOf(St, V) -> (St -> ItemsOf(St, V)) -> ItemStep(V, St) -> ItemStep(V, ItemsOf(St, V)))) := SMod.c_fmap
+Coalg.stepper : Implicit({St} => Implicit({V} => ItemsOf(St, V) -> St -> ItemStep(V, St))) := SMod.c_stepper
+Coalg.state : Implicit({St} => Implicit({V} => ItemsOf(St, V) -> St)) := SMod.c_state
+Coalg.with_state : Implicit({St} => Implicit({V} => ItemsOf(St, V) -> St -> ItemsOf(St, V))) := SMod.c_with
+Coalg.out : Implicit({St} => Implicit({V} => ItemsOf(St, V) -> ItemStep(V, ItemsOf(St, V)))) := SMod.c_out
+Coalg.hoist : Implicit({St} => Implicit({V} => Implicit({W} => ((St -> ItemsOf(St, W)) -> ItemStep(W, St) -> ItemStep(W, ItemsOf(St, W))) -> (ItemStep(V, St) -> ItemStep(W, St)) -> ItemsOf(St, V) -> ItemsOf(St, W)))) := SMod.c_hoist
+Coalg.until : Implicit({St} => Implicit({T} => Implicit({R} => EmitCoalg(St, T) -> (St -> Step(R, Unit)) -> CoalgOf(St, {X} => Step(R, Emit(T, X)))))) := SMod.c_until
+Coalg.after : Implicit({St} => Implicit({T} => Implicit({R} => EmitCoalg(St, T) -> (Emit(T, St) -> Step(R, Unit)) -> CoalgOf(St, {X} => Step(R, Emit(T, X)))))) := SMod.c_after
+Coalg.fold : Implicit({St} => Implicit({V} => Implicit({A} => PartialFn(PartialFn(ItemsOf(St, V), A) -> ItemStep(V, ItemsOf(St, V)) -> A, PartialFn(ItemsOf(St, V), A))))) := SMod.c_fold
+
+// ---------------------------------------------------------------- 3. Stream / Task / Items
+Stream.new : Implicit({St} => Implicit({T} => (St -> Emit(T, St)) -> St -> EmitCoalg(St, T))) := SMod.stream_new
+Stream.nats : EmitCoalg(Nat, Nat) := SMod.nats
+Stream.as_items : Implicit({St} => Implicit({V} => EmitCoalg(St, V) -> ItemCoalg(St, V))) := SMod.as_items
+Stream.trace : Machine -> Nat -> EmitCoalg(Machine, Machine) := SMod.m_trace
+
+Task.new : Implicit({St} => Implicit({R} => (St -> Step(R, St)) -> St -> TaskCoalg(St, R))) := SMod.task_new
+Task.of_call : Tree -> Tree -> Nat -> TaskCoalg(Machine, Tree) := SMod.task
+Task.pure : Implicit({R} => R -> TaskCoalg(R, R)) := SMod.task_return
+Task.and_then : Implicit({S1} => Implicit({S2} => Implicit({R} => Implicit({S} => TaskCoalg(S1, R) -> (R -> TaskCoalg(S2, S)) -> TaskCoalg(PhaseOf(TaskCoalg(S1, R), TaskCoalg(S2, S)), S))))) := SMod.task_then
+Task.answers : Implicit({St} => Implicit({R} => TaskCoalg(St, R) -> UntilItemCoalg(Step(Unit, TaskCoalg(St, R)), R))) := SMod.answers
+
+Items.new : Implicit({St} => Implicit({V} => (St -> ItemStep(V, St)) -> St -> ItemCoalg(St, V))) := SMod.s_new
+Items.from_list : Implicit({V} => List(V) -> UntilItemCoalg(List(V), V)) := SMod.s_from_list
+Items.map : Implicit({St} => Implicit({V} => Implicit({W} => AnyItemCoalg(St, V) -> (V -> W) -> ItemCoalg(St, W)))) := SMod.s_map
+Items.filter : Implicit({St} => Implicit({V} => AnyItemCoalg(St, V) -> (V -> Bool) -> ItemCoalg(St, V))) := SMod.s_filter
+Items.bounded : Implicit({St} => Implicit({V} => ItemCoalg(St, V) -> Nat -> ItemCoalg(Budget(St), V))) := SMod.bounded
+Items.take : Implicit({St} => Implicit({V} => PartialFn(ItemsOf(St, V), PartialFn(Nat, TakenOf(St, V))))) := SMod.s_take
+Items.all : Implicit({St} => Implicit({V} => PartialFn(ItemsOf(St, V), PartialFn(V -> Bool, Bool)))) := SMod.s_all
+Items.ending : Implicit({St} => Implicit({V} => PartialFn(ItemsOf(St, V), Ending))) := SMod.s_ending
+Items.upto : Implicit({St} => Implicit({V} => PartialFn(ItemsOf(St, V), PartialFn(V -> Bool, List(V))))) := SMod.s_upto
+Items.collect : Implicit({St} => Implicit({V} => PartialFn(ItemsOf(St, V), List(V)))) := SMod.s_list
+Items.verdict : Implicit({St} => PartialFn(ItemsOf(St, Tree), Verdict)) := SMod.verdict
+Items.yielded : Implicit({St} => ItemCoalg(St, Pair(Tree, Outcome(Tree, Tree))) -> ItemCoalg(St, Tree)) := SMod.s_yielded
+
+// ---------------------------------------------------------------- 4. Budget, Stopping, Taken, Round, Outcomes
+Stopping.new : Implicit({St} => Implicit({V} => ItemCoalg(St, V) -> (St -> Nat) -> StoppingOf(St, V))) := SMod.stopping
+Stopping.measure : Implicit({St} => Implicit({V} => StoppingOf(St, V) -> St -> Nat)) := SMod.stopping_measure
+Stopping.items : Implicit({St} => Implicit({V} => StoppingOf(St, V) -> ItemCoalg(St, V))) := SMod.stopping_items
+Stopping.fuel : Implicit({St} => Implicit({V} => StoppingOf(St, V) -> Nat)) := SMod.stopping_fuel
+Stopping.settle : Implicit({St} => Implicit({V} => StoppingOf(St, V) -> ItemCoalg(Budget(St), V))) := SMod.settle
+Stopping.map : Implicit({St} => Implicit({V} => Implicit({W} => AnyStoppingOf(St, V) -> (V -> W) -> StoppingOf(St, W)))) := SMod.stopping_map
+Stopping.filter : Implicit({St} => Implicit({V} => AnyStoppingOf(St, V) -> (V -> Bool) -> StoppingOf(St, V))) := SMod.stopping_filter
+
+Taken.new : Implicit({St} => Implicit({V} => List(V) -> ItemsOf(St, V) -> TakenOf(St, V))) := SMod.taken
+Taken.items : Implicit({St} => Implicit({V} => TakenOf(St, V) -> List(V))) := SMod.s_items
+Taken.rest : Implicit({St} => Implicit({V} => TakenOf(St, V) -> ItemsOf(St, V))) := SMod.s_rest
+
+Round.new : Implicit({St} => Implicit({V} => List(V) -> List(ItemsOf(St, V)) -> Bool -> RoundOf(St, V))) := SMod.round
+Round.found : Implicit({St} => Implicit({V} => RoundOf(St, V) -> List(V))) := SMod.round_found
+Round.survivors : Implicit({St} => Implicit({V} => RoundOf(St, V) -> List(ItemsOf(St, V)))) := SMod.round_survivors
+Round.dropped_spent : Implicit({St} => Implicit({V} => RoundOf(St, V) -> Bool)) := SMod.round_dropped_spent
+Round.advance_head : Implicit({St} => Implicit({V} => NonEmpty(ItemsOf(St, V)) -> RoundOf(St, V))) := SMod.advance_head
+Round.advance_all : Implicit({St} => Implicit({V} => List(ItemsOf(St, V)) -> RoundOf(St, V))) := SMod.advance_all
+
+Noted : Implicit({V} => Implicit({I} => Tree -> Outcome(V, I))) := SMod.noted
+SplitOn : Implicit({V} => Implicit({I} => Tree -> List(I) -> Outcome(V, I))) := SMod.split_on
+SplitInto : Implicit({V} => Implicit({I} => List(I) -> Outcome(V, I))) := SMod.split_into
+
+// Scoped-lemma combinators (certified above; pinned with `is_cert` = true)
+Stopping.from_list := SMod.stopping_list
+Items.steps := SMod.s_steps
+Items.worklist := SMod.s_worklist
+Items.merge_with := SMod.s_merge_with
+stopping_list_verified : The(Bool, true) := is_cert(stopping_list_cert)
+worklist_verified : The(Bool, true) := is_cert(worklist_cert)
+merge_with_verified : The(Bool, true) := is_cert(merge_with_cert)

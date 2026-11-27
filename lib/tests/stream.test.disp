@@ -1,8 +1,8 @@
 open use raw "../prelude.disp" {}
 open use raw "../core/list.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../stream.disp" {}
+open use raw "../core/machine.disp" {}
+open use raw "../core/verdict.disp" {}
+open use raw "../core/stream.disp" {}
 open use raw "fixtures.disp" {}
 
 spin := fix({self, v} => self(v))
