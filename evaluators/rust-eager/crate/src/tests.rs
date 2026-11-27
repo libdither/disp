@@ -163,6 +163,7 @@ fn snapshot_cold_equivalent_steps() {
     // cold: `S not not false` = (not false)(not false); `not false` is a nested fact,
     // computed fresh once inside the outer S fact, then live-hit.
     let mut a = Arena::new();
+    a.memo.record_costs();
     let not = build_not(&mut a);
     let s_not_not = {
         let sn = a.stem(not);

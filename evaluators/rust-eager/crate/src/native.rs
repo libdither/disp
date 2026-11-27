@@ -92,10 +92,17 @@ impl EagerSession {
     }
 
     // ── memory knobs ──
-    /// Cap the eager apply memo at `n` entries (0 = unbounded); over the cap it sheds.
+    /// Bound the eager apply memo at about `n` entries (0 = unbounded), as two generations
+    /// (see memo.rs).
     #[napi]
     pub fn set_memo_limit(&mut self, n: u32) {
         self.arena.memo.set_limit(n as usize);
+    }
+    /// Keep each memo entry's cold cost and parent, which `save_snapshot` needs. Call it
+    /// before reducing anything; without it the memo stores results only.
+    #[napi]
+    pub fn record_costs(&mut self) {
+        self.arena.memo.record_costs();
     }
     /// Drop the re-derivable caches (apply memo + susp WHNF memo); live trees untouched.
     #[napi]

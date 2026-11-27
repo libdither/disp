@@ -489,6 +489,9 @@ impl Arena {
     /// snapshot at a quiet point (post-endScope). Skips writing when the run added
     /// nothing durable — the converged fixed point.
     pub(crate) fn save_snapshot(&mut self, path: &str, stamp: &[u8], min_cost: u32) -> Result<SaveOutcome, String> {
+        if !self.memo.records_costs() {
+            return Err("memo costs were not recorded (call record_costs before reducing)".into());
+        }
         let overlay_live = self.nodes.len() - self.free_list.len();
         let new_facts = self.memo.iter().filter(|&(_, _, _, c, _, _)| c >= min_cost).count();
         if self.base.is_some() && overlay_live == 0 && new_facts == 0 {

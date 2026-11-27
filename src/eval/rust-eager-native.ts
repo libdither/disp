@@ -50,6 +50,7 @@ interface EagerSessionNative {
   recognizeTreeEq(handle: number): void
   recognizeMachine?(handle: number): void                  // absent in older addons
   setMemoLimit(n: number): void
+  recordCosts?(): void                                      // absent in older addons
   clearCaches(): void
   loadSnapshot(path: string, stamp: string): boolean
   saveSnapshot(path: string, stamp: string, minCost: number): number  // 1 saved, 0 unchanged, -1 error
@@ -93,9 +94,9 @@ class RustEagerNativeSession implements Session<number> {
     this.#s = new (loadAddon().EagerSession)()
     this.#budget = opts?.defaultBudget ?? DEFAULT_BUDGET
     this.#noNativeIntercept = opts?.noNativeIntercept === true
-    // Memory knob: cap the apply memo for smaller-footprint / long-lived sessions
-    // (RUST_EAGER_MEMO_LIMIT=<entries>). Off by default — per-file sessions are bounded
-    // by dispose() anyway.
+    // Memory knob: bound the apply memo for smaller-footprint / long-lived sessions
+    // (RUST_EAGER_MEMO_LIMIT=<entries>, kept as two generations of half that). Off by
+    // default — per-file sessions are bounded by dispose() anyway.
     const lim = Number(process.env.RUST_EAGER_MEMO_LIMIT ?? 0)
     if (Number.isFinite(lim) && lim > 0) this.#s.setMemoLimit(lim >>> 0)
   }
@@ -111,6 +112,9 @@ class RustEagerNativeSession implements Session<number> {
   // fork-dispatches, and returns 1 saved / 0 unchanged-skipped / -1 error.
   loadSnapshot(path: string, stamp: string): boolean { return this.#s.loadSnapshot(path, stamp) }
   saveSnapshot(path: string, stamp: string, minCost = 0): number { return this.#s.saveSnapshot(path, stamp, minCost) }
+  // A session that will saveSnapshot must call this before any reduction: by default the
+  // memo keeps only results, not the costs and parents a snapshot stores.
+  recordCosts(): void { this.#s.recordCosts?.() }
   // Frozen-memo hits this session — the snapshot's realized value.
   frozenHits(): number { return this.#s.frozenHits() }
   // Predicted-cold step count: warm steps + the EXACT cold cost of this run's frozen hits

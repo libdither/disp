@@ -120,8 +120,11 @@ export interface Session<H = unknown> {
   // saveSnapshot compacts and keeps entries costing ≥ minCost reduction steps;
   // returns 1 saved / 0 skipped (nothing durable added) / -1 error. frozenHits
   // reports how many times the loaded snapshot's facts were used this session.
+  // recordCosts must come before any reduction on a session that will saveSnapshot (the
+  // memo otherwise keeps results only, without the costs a snapshot stores).
   loadSnapshot?(path: string, stamp: string): boolean
   saveSnapshot?(path: string, stamp: string, minCost?: number): number
+  recordCosts?(): void
   frozenHits?(): number
   // coldEquiv: this warm run's PREDICTED-COLD step count = steps + the cold cost of the
   // facts it got as frozen hits, priced EXACTLY (a hit fact counts only when no ancestor is

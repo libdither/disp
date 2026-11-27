@@ -80,6 +80,8 @@ const memoStamp = (() => {
   if (!MEMO_ON || !sharedSession?.loadSnapshot) return null
   try { return `v3:${createHash("sha256").update(readFileSync(rustEagerNativeArtifactPath())).digest("hex")}` } catch { return null }
 })()
+// This run will save a snapshot, which needs every memo entry's cost and parent.
+if (memoStamp) sharedSession!.recordCosts?.()
 if (memoStamp && existsSync(memoPath)) {
   const t0 = Date.now()
   const ok = sharedSession!.loadSnapshot!(memoPath, memoStamp)
