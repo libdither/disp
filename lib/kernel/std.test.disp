@@ -1,0 +1,18 @@
+// End-to-end auto-verification tests for the promoted core kernel & re-typechecked stdlib!
+// Opening each module triggers `check_module` automatically through `src/elab/driver.ts`.
+open use "prelude.disp"
+open use "std_prelude.disp"
+open use "std_list.disp"
+open use "std_verdict.disp"
+
+test ck_and(true, false) = false
+test ck_nat_le(2, 3) = true
+test ck_tree_lt(0, 1) = true
+test ident(Nat, 42) = 42
+test pick(0) = t
+test pick(3) = 3
+test ack(2, 2) = 7
+test ck_length([1, 2, 3]) = 3
+test ck_zip([1, 2], [true, false]) = [pair(1, true), pair(2, false)]
+test ck_agree("Proved", "Open") = true
+test ck_agree("Proved", ck_refuted(0)) = false

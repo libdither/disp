@@ -1,0 +1,50 @@
+// Re-typechecked standard prelude (`lib/prelude.disp`) verified by `lib/kernel/prelude.disp` via `:` syntax.
+open use "prelude.disp"
+
+// Base constants and constructors
+ck_true : Bool := true
+ck_false : Bool := false
+ck_zero : Nat := zero
+ck_succ : Nat -> Nat := succ
+ck_test : Tree -> Tree := test
+ck_pair : Tree -> Tree -> Tree := pair
+
+// Boolean logic (previously untyped because it raw-triages Bool)
+ck_not : Bool -> Bool := not
+ck_and : Bool -> Bool -> Bool := and
+ck_or : Bool -> Bool -> Bool := or
+ck_select : Tree -> Tree -> Bool -> Tree := select
+ck_cond : Bool -> Tree -> Tree -> Tree := cond
+
+// Tree shape inspectors and projections (previously untyped!)
+ck_is_leaf : Tree -> Bool := is_leaf
+ck_is_stem : Tree -> Bool := is_stem
+ck_is_fork : Tree -> Bool := is_fork
+ck_pair_fst : Tree -> Tree := pair_fst
+ck_pair_snd : Tree -> Tree := pair_snd
+ck_stem_child : Tree -> Tree := stem_child
+
+// Nat predicates and arithmetic (all structurally total!)
+ck_is_zero : Nat -> Bool := is_zero
+ck_is_succ : Nat -> Bool := is_succ
+ck_nat_pred : Nat -> Nat := nat_pred
+ck_nat_le : Nat -> Nat -> Bool := nat_le
+ck_nat_lt : Nat -> Nat -> Bool := nat_lt
+
+// Structural equality & total order on arbitrary trees (both total!)
+ck_tree_eq : Tree -> Tree -> Bool := tree_eq
+ck_tree_lt : Tree -> Tree -> Bool := tree_lt
+
+// Raw triage builder & delayed wait
+ck_triage : Tree -> (Tree -> Tree) -> (Tree -> Tree -> Tree) -> Tree -> Tree := triage
+ck_wait : (Tree -> Tree -> Tree) -> Tree -> Tree -> Tree := wait
+
+// Surface polymorphism & dependent types via `:` syntax
+ident : {A : Type} -> A -> A := {_A, x} => x
+Pred : Type := Nat -> Nat
+step : Pred := succ
+pick : {n : Nat} -> if (is_zero(n)) { Unit } else { Nat } := {n} => if (is_zero(n)) { t } else { n }
+rec ack : {m : Nat, n : Nat} -> Nat :=>
+	if (is_zero(m)) { succ(n) }
+	else if (is_zero(n)) { ack(nat_pred(m), 1) }
+	else { ack(nat_pred(m), ack(m, nat_pred(n))) }

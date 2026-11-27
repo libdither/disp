@@ -1,0 +1,23 @@
+// Re-typechecked standard list library (`lib/list.disp`) verified by `lib/kernel/prelude.disp` via `:` syntax.
+open use "prelude.disp"
+
+// Polymorphic list operations (verified on unmodified `lib/list.disp` definitions!)
+ck_nil : Implicit({A} => List(A)) := nil
+ck_cons : Implicit({A} => A -> List(A) -> List(A)) := cons
+ck_is_nil : Implicit({A} => List(A) -> Bool) := is_nil
+ck_reduce : Implicit({A} => Implicit({C} => (A -> C -> C) -> C -> List(A) -> C)) := reduce
+ck_map : Implicit({A} => Implicit({B} => List(A) -> (A -> B) -> List(B))) := map
+ck_append : Implicit({A} => List(A) -> List(A) -> List(A)) := append
+ck_concat : Implicit({A} => List(List(A)) -> List(A)) := concat
+ck_reverse : Implicit({A} => List(A) -> List(A)) := reverse
+ck_length : Implicit({A} => List(A) -> Nat) := length
+ck_filter : Implicit({A} => List(A) -> (A -> Bool) -> List(A)) := filter
+ck_all : Implicit({A} => List(A) -> (A -> Bool) -> Bool) := all
+ck_any : Implicit({A} => List(A) -> (A -> Bool) -> Bool) := any
+ck_zip : Implicit({A} => Implicit({B} => List(A) -> List(B) -> List(Pair(A, B)))) := zip
+// `concat_nat` supplies the cut lemma `List(List(Nat)) -> List(Nat)` so unmodified `cross` checks!
+ck_concat_nat : List(List(Nat)) -> List(Nat) := concat
+ck_cross_nat : List(Nat) -> List(Nat) -> (Nat -> Nat -> Nat) -> List(Nat) := cross
+// Equality-based list ops require `Tree` (since abstract `A` forbids `==`)
+ck_member : List(Tree) -> Tree -> Bool := member
+ck_dedup : List(Tree) -> List(Tree) := dedup

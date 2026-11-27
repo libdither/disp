@@ -1,0 +1,79 @@
+// Surface vocabulary and `check_module` hook for Disp's evaluator-map kernel.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "kernel.disp" {}
+
+// ---------------------------------------------------------------- standard base types
+rec NatP :: {v : Tree} -> Bool :=>
+	if (is_leaf(v)) { true }
+	else if (is_fork(v)) { if (is_leaf(v.fst)) { NatP(v.snd) } else { false } }
+	else { false }
+BoolP :: {v : Tree} -> Bool :=>
+	if (is_leaf(v)) { true }
+	else if (is_stem(v)) { is_leaf(stem_child(v)) }
+	else { false }
+
+Tree := TreeT
+Nat := data_t(NatP)
+Bool := data_t(BoolP)
+Bit := Bool
+Unit := UnitT
+Empty := EmptyT
+Any := AnyT
+
+// Shallow universe for `:` annotations: a type is a `(check, assume)` fork
+Type := pair(data_t(is_fork).fst, {_u, _backing, E} => E)
+TypeFam := pair({E, fl, nx, v, k} => k(E, fl, nx, v), {_u, _backing, E} => if (is_leaf("TypeFam")) { E } else { E })
+
+// ---------------------------------------------------------------- composable type formers
+/// Surface binder target (`{x : A} -> B` / `A -> B`): routes `{A : Type} -> ...` to `forall_t`
+Pi := {A, fam} =>
+	if (A == Type) { forall_t(fam) }
+	else if (A == TypeFam) { forall_fam_t(fam) }
+	else { pi_t(A, fam) }
+Fn := fn_t
+FnLazy := fn_lazy_t
+PartialPi := partial_pi
+PartialFn := partial_fn
+List := ListT
+Sigma := sigma_t
+Pair := pair_t
+Eq := eq_t
+The := the_t
+Refine := refine_t
+Quotient := quot_t
+QuotPi := quot_pi
+QuotFn := quot_fn
+Bounded := bounded_t
+BoundedPi := bounded_pi
+Opaque := opaque_with_elim
+Forall := forall_t
+ForallFam := forall_fam_t
+ForallK := forall_k
+Implicit := erased_forall
+Data := data_t
+
+// ---------------------------------------------------------------- module auto-verification hook
+make_record := {names, vals} => pair(names, vals)
+list_const := {x} => x
+rec value_of := {name, names, vals} => if (names.fst == name) { vals.fst } else { value_of(name, names.snd, vals.snd) }
+
+rec check_entries := {depth, fuel, lemmas, typs, rec_val} =>
+	if (is_leaf(typs)) { [] }
+	else {
+		let name := typs.fst.fst
+		let T := typs.fst.snd
+		let v := value_of(name, rec_val.fst, rec_val.snd)
+		let r := why_trusted(depth, fuel, lemmas, T, v)
+		if (r == yes) {
+			let next_lemmas := if ((is_fix_fn(v)) && (not(v == tree_eq))) { cons(pair(v, T), lemmas) } else { lemmas }
+			check_entries(depth, fuel, next_lemmas, typs.snd, rec_val)
+		}
+		else { cons(pair(name, r), check_entries(depth, fuel, lemmas, typs.snd, rec_val)) }
+	}
+
+check_with :: {depth : Nat := check_depth, fuel : Nat := check_fuel} -> Tree :=> {typs, rec_val} => {
+	let fails := check_entries(depth, fuel, [], typs, rec_val)
+	if (fails.is_nil) { true } else { fails }
+}
+check_module := check_with(check_depth, check_fuel)

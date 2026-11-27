@@ -45,7 +45,8 @@ test accepts(Nat, 3) = true
 test accepts(Nat, t(t)) = false
 test unoptimized(NN)(dup) = pair(1, pair(1, 1))
 test refute_at(NN, spin, 64) = nothing
-test accepts(NN, spin) = true
+test accepts(NN, spin) = false
+test accepts(partial_fn(Nat, Nat), spin) = true
 
 // ---- 2. functions, recursion, containers, lemmas
 test accepts(NN, succ) = true
@@ -90,15 +91,16 @@ test accepts(fn_t(H, fn_t(fn_t(Nat, NN), NN)), comp3) = true
 test accepts(fn_t(ListN, fn_t(fn_t(Nat, NN), NN)), fold_n) = true
 
 // ---- 4. K-skip laziness & diverging dependent families
-test accepts(fn_t(Nat, Empty), bot) = true
+test accepts(fn_t(Nat, Empty), bot) = false
+test accepts(partial_fn(Nat, Empty), bot) = true
 skips := {n, g} => n(is_leaf(bot(g)))
 test accepts(fn_t(Nat, fn_t(Nat, Bit)), skips) = false
-test why([pair(bot, fn_t(Nat, Empty))], fn_t(Nat, fn_t(Nat, Bit)), skips).fst = "Fault"
+test why([pair(bot, partial_fn(Nat, Empty))], fn_t(Nat, fn_t(Nat, Bit)), skips).fst = "Fault"
 test is_found(refute_at(fn_t(Nat, fn_t(Nat, Bit)), skips, 256)) = true
 test accepts(fn_lazy_t(Empty, Nat), pair(t, t(t))) = false
 test is_found(refute_at(fn_lazy_t(Empty, Nat), pair(t, t(t)), 64)) = true
 test accepts(fn_lazy_t(Empty, Nat), pair(t, 0)) = true
-NE := fn_t(Nat, Empty)
+NE := partial_fn(Nat, Empty)
 famE := {f} => if (is_leaf(f(0))) { Bit } else { Bit }
 Tg := pi_t(NE, famE)
 app5 := {g, f} => if (is_leaf(g(f))) { 5 } else { 5 }
@@ -165,11 +167,32 @@ test accepts(BNN, succ) = true
 test accepts(BNN, spin) = false
 test is_found(refute_at(BNN, spin, 16)) = true
 test refute_at(BNN, succ, 16) = nothing
-// Looping bogus proof passes partial `pi_t`, but `bounded_pi` BOTH rejects and refutes it!
+// Total `pi_t` rejects `spin` (structural termination!); `partial_pi` allows partial loops; `bounded_pi` also refutes it!
 false_prop := {n} => eq_t(add_n(n, n), n)
-test accepts(pi_t(Nat, false_prop), spin) = true
+test accepts(partial_pi(Nat, false_prop), spin) = true
+test accepts(pi_t(Nat, false_prop), spin) = false
 test accepts(bounded_pi(Nat, false_prop, {_a} => 50), spin) = false
 test is_found(refute_at(bounded_pi(Nat, false_prop, {_a} => 50), spin, 16)) = true
+
+// ---- 7b. Structural & lexicographic termination (`pi_t` / `fn_t`)
+// Direct recursive Ackermann: lexicographic decrease on `(m, n)` passes total `fn_t(Nat, NN)`!
+rec ack_rec :: {m : Tree, n : Tree} -> Tree :=>
+	if (is_zero(m)) { succ(n) }
+	else if (is_zero(n)) { ack_rec(nat_pred(m), 1) }
+	else { ack_rec(nat_pred(m), ack_rec(m, nat_pred(n))) }
+test accepts(fn_t(Nat, NN), ack_rec) = true
+test ack_rec(2, 2) = 7
+// Second-argument structural decrease (arg 1 stays equal, arg 2 shrinks)
+rec add_right :: {a : Tree, b : Tree} -> Tree :=> if (is_zero(b)) { a } else { succ(add_right(a, nat_pred(b))) }
+test accepts(fn_t(Nat, NN), add_right) = true
+// Rejects growing recursion, same-size recursion, oscillating recursion, escaping partial recursive calls, and tok_call spoofing!
+test accepts(NN, fix({r, n} => if (is_zero(n)) { 0 } else { r(succ(n)) })) = false
+test accepts(NN, fix({r, n} => if (is_zero(n)) { 0 } else { r(n) })) = false
+bad_osc := fix({r, m} => {n} => if (is_zero(m)) { if (is_zero(n)) { 0 } else { r(1, nat_pred(n)) } } else { r(nat_pred(m), succ(n)) })
+test accepts(fn_t(Nat, NN), bad_osc) = false
+test accepts(fn_t(Nat, NN), fix({r, a} => r(a))) = false
+test accepts(fn_t(Nat, fn_t(Nat, NN)), fix({r, a} => {b} => r(a))) = false
+test accepts(pi_t(Nat, {n} => fn_t(eq_t(n, dbl_n(n)), Empty)), fix({r, n} => {_e} => r(n, t))) = false
 
 // ---- 8. NEW: quotients (`quot_t` / `quot_fn`), custom approved eliminators, eq transitivity + congruence
 rec parity :: {n : Tree} -> Tree :=> if (is_zero(n)) { 0 } else if (is_zero(nat_pred(n))) { 1 } else { parity(nat_pred(nat_pred(n))) }

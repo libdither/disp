@@ -1,0 +1,19 @@
+// Re-typechecked standard verdict library (`lib/verdict.disp`) verified by `lib/kernel/prelude.disp` via `:` syntax.
+open use "prelude.disp"
+open use raw "../verdict.disp" {}
+
+VerdictP := {v} =>
+	if (v == "Proved") { true }
+	else if (v == "Open") { true }
+	else if (is_fork(v)) { (v.fst == "Refuted") || (v.fst == "Open") }
+	else { false }
+Verdict := Refine(Tree, VerdictP)
+
+ck_refuted : Tree -> Verdict := refuted
+ck_open_on : Tree -> Verdict := open_on
+ck_is_proved : Verdict -> Bool := is_proved
+ck_is_refuted : Verdict -> Bool := is_refuted
+ck_is_open : Verdict -> Bool := is_open
+ck_flat : Verdict -> Verdict := flat
+ck_agrees : Verdict -> Bool -> Bool := agrees
+ck_agree : Verdict -> Verdict -> Bool := agree
