@@ -5,15 +5,20 @@
 // spec; recover via git when re-validating).
 
 import type { Tree } from "../eval/eager.js"
+import { type CoreExpr, copySpan, spanOf, formatSpan } from "../core/ir.js"
 import { elab, B } from "./state.js"
 
-// CIR: intermediate representation with explicit S/K/I sentinels.
+// CIR: intermediate representation extending CoreExpr with explicit S/K/I
+// sentinels during bracket abstraction. Every CoreExpr is a valid Cir.
 export type Cir =
   | { tag: "lit"; t: Tree }
   | { tag: "var"; name: string }
   | { tag: "app"; f: Cir; x: Cir }
   | { tag: "lam"; x: string; body: Cir }
   | { tag: "S" } | { tag: "K" } | { tag: "I" }
+
+/// Lower a canonical CoreExpr directly to a Tree via bracket abstraction.
+export const coreToTree = (e: CoreExpr): Tree => cirToTree(eliminateLams(e))
 
 export const S: Cir = { tag: "S" }
 export const K: Cir = { tag: "K" }
@@ -94,15 +99,18 @@ export function abstractName(name: string, body: Cir, rec: Abstract = abstractNa
 export function eliminateLams(e: Cir): Cir {
   switch (e.tag) {
     case "lit": case "var": case "S": case "K": case "I": return e
-    case "app": return cap(eliminateLams(e.f), eliminateLams(e.x))
-    case "lam": return abstractName(e.x, eliminateLams(e.body))
+    case "app": return copySpan(e, cap(eliminateLams(e.f), eliminateLams(e.x)))
+    case "lam": return copySpan(e, abstractName(e.x, eliminateLams(e.body)))
   }
 }
 
 export function cirToTree(e: Cir): Tree {
   switch (e.tag) {
     case "lit": return e.t
-    case "var": throw new Error(`cirToTree: unresolved free variable ${e.name}`)
+    case "var": {
+      const s = spanOf(e)
+      throw new Error(`cirToTree: unresolved free variable ${e.name}${s ? ` at ${formatSpan(s)}` : ""}`)
+    }
     case "I":   return elab.cs.fork(elab.cs.fork(elab.cs.leaf(), elab.cs.leaf()), elab.cs.leaf())
     case "K":   return elab.cs.stem(elab.cs.leaf())
     case "S":   return elab.cs.fork(elab.cs.stem(elab.cs.fork(elab.cs.leaf(), elab.cs.leaf())), elab.cs.leaf())

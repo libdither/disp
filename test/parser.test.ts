@@ -537,7 +537,7 @@ describe("parse: items", () => {
   it("infix ==/&&/|| desugar; application binds tighter", () => {
     const eq = parseItems("x := f(a) == g(b)")[0]
     if (eq.tag !== "field") throw new Error("shape")
-    expect(eq.value).toEqual(ap(ap(v("tree_eq"), ap(v("f"), v("a"))), ap(v("g"), v("b"))))
+    expect(eq.value).toEqual(ap(ap(v("@sugar:tree_eq"), ap(v("f"), v("a"))), ap(v("g"), v("b"))))
     const and = parseItems("x := a && b")[0]
     if (and.tag !== "field") throw new Error("shape")
     expect(and.value).toEqual({ tag: "if", cond: v("a"), thenBody: v("b"), elseBody: v("false") })
@@ -555,7 +555,7 @@ describe("parse: items", () => {
     const items = parseItems("test(a) == b = true")
     const eq = items[0]
     if (eq.tag !== "test") throw new Error("shape")
-    expect(eq.lhs).toEqual(ap(ap(v("tree_eq"), ap(v("test"), v("a"))), v("b")))
+    expect(eq.lhs).toEqual(ap(ap(v("@sugar:tree_eq"), ap(v("test"), v("a"))), v("b")))
     expect(eq.rhs).toEqual(v("true"))
   })
 

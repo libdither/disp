@@ -7,10 +7,14 @@
 //   3. Parser combinators
 //   4. Grammar productions
 
+import { type Span, attachSpan, spanOf } from "./core/ir.js"
+
 // ───────────────────────────── 1. Tokens ─────────────────────────────────
 
 // Every token carries the 1-based source line it starts on (`line`), stamped by
-// tokenize — the runner uses it to report which test equation failed.
+// tokenize — the runner uses it to report which test equation failed. Full
+// `{ line, col, endLine, endCol, source? }` spans are attached out-of-band via
+// `attachSpan` so `Tok` structural equality stays unchanged.
 export type Tok = (
   | { t: "id"; v: string }
   | { t: "num"; v: number }
@@ -22,7 +26,7 @@ export type Tok = (
   | { t: "eof" }
 ) & { line?: number }
 
-// `let` and `test` are NOT keywords: `let` is a library request decorator (cut.disp)
+// `let` and `test` are NOT keywords: `let` is a library request decorator (surface.disp)
 // consumed through the decorated-declaration grammar, and `test` is the prelude
 // identity prefixing the equation item `lhs = rhs`. The parser knows them only as
 // identifiers (plus the braced `let` member, the lexical binding form).
@@ -35,16 +39,24 @@ const PUNCT = ["#", ":=>", ":=", "::", "==", "&&", "||", "=>", "->", "<-", "→"
 const IDENT_HEAD = /[A-Za-z_]/
 const IDENT_TAIL = /[A-Za-z0-9_']/
 
-export function tokenize(src: string): Tok[] {
+export function tokenize(src: string, sourcePath?: string): Tok[] {
   const toks: Tok[] = []
   let i = 0
   let line = 1
-  const push = (tok: Tok) => { tok.line = line; toks.push(tok) }
+  let lineStart = 0
+  const push = (tok: Tok, startLine: number, startCol: number, endLine: number, endCol: number) => {
+    tok.line = startLine
+    attachSpan(tok, sourcePath
+      ? { line: startLine, col: startCol, endLine, endCol, source: sourcePath }
+      : { line: startLine, col: startCol, endLine, endCol })
+    toks.push(tok)
+  }
   while (i < src.length) {
     const c = src[i]
+    const col = i - lineStart + 1
     // Newlines are significant (SEMI/COMMA separator). The nl token belongs to
     // the line it terminates.
-    if (c === "\n") { push({ t: "nl" }); line++; i++; continue }
+    if (c === "\n") { push({ t: "nl" }, line, col, line, col + 1); line++; i++; lineStart = i; continue }
     if (/[ \t\r]/.test(c)) { i++; continue }
     // Line comment: //
     if (c === "/" && i + 1 < src.length && src[i + 1] === "/") {
@@ -54,47 +66,80 @@ export function tokenize(src: string): Tok[] {
     // Block comment: /* */ (count the newlines it spans)
     if (c === "/" && i + 1 < src.length && src[i + 1] === "*") {
       i += 2
-      while (i + 1 < src.length && !(src[i] === "*" && src[i + 1] === "/")) { if (src[i] === "\n") line++; i++ }
+      while (i + 1 < src.length && !(src[i] === "*" && src[i + 1] === "/")) {
+        if (src[i] === "\n") { line++; lineStart = i + 1 }
+        i++
+      }
       if (i + 1 >= src.length) throw new Error(`tokenize: unterminated block comment`)
       i += 2; continue
     }
     if (c === '"') {
+      const startLine = line
       const j = src.indexOf('"', i + 1)
       if (j < 0) throw new Error(`tokenize: unterminated string at offset ${i}`)
-      push({ t: "str", v: src.slice(i + 1, j) })
-      for (let k = i + 1; k < j; k++) if (src[k] === "\n") line++
+      for (let k = i + 1; k < j; k++) if (src[k] === "\n") { line++; lineStart = k + 1 }
+      push({ t: "str", v: src.slice(i + 1, j) }, startLine, col, line, (j + 1) - lineStart + 1)
       i = j + 1; continue
     }
-    if (c === "△") { push({ t: "leaf" }); i++; continue }
+    if (c === "△") { push({ t: "leaf" }, line, col, line, col + 1); i++; continue }
     // Bare `t` (not followed by an ident char) is the leaf; otherwise an ident.
     if (c === "t" && !(i + 1 < src.length && IDENT_TAIL.test(src[i + 1]))) {
-      push({ t: "leaf" }); i++; continue
+      push({ t: "leaf" }, line, col, line, col + 1); i++; continue
     }
     if (/[0-9]/.test(c)) {
       let j = i + 1
       while (j < src.length && /[0-9]/.test(src[j])) j++
-      push({ t: "num", v: Number(src.slice(i, j)) })
+      push({ t: "num", v: Number(src.slice(i, j)) }, line, col, line, j - lineStart + 1)
       i = j; continue
     }
     // A '[' glued to an identifier/close-delimiter is postfix INDEXING, not an
     // array literal ('xs[2]' vs 'f [1, 2]' — whitespace decides).
-    if (c === "[" && i > 0 && /[A-Za-z0-9_')\]"]/.test(src[i - 1])) { push({ t: "punct", v: "idx[" }); i++; continue }
+    if (c === "[" && i > 0 && /[A-Za-z0-9_')\]"]/.test(src[i - 1])) { push({ t: "punct", v: "idx[" }, line, col, line, col + 1); i++; continue }
     // A '(' glued to an expression is a CALL argument list ('f(a, b)', 'x.f(a)').
     // Application has no other spelling: 'f (a)' with a space is a parse error.
-    if (c === "(" && i > 0 && /[A-Za-z0-9_')\]}"△]/.test(src[i - 1])) { push({ t: "punct", v: "call(" }); i++; continue }
+    if (c === "(" && i > 0 && /[A-Za-z0-9_')\]}"△]/.test(src[i - 1])) { push({ t: "punct", v: "call(" }, line, col, line, col + 1); i++; continue }
     const p = PUNCT.find(p => src.startsWith(p, i))
-    if (p) { push({ t: "punct", v: p }); i += p.length; continue }
+    if (p) { push({ t: "punct", v: p }, line, col, line, col + p.length); i += p.length; continue }
     if (IDENT_HEAD.test(c)) {
       let j = i + 1
       while (j < src.length && IDENT_TAIL.test(src[j])) j++
       const word = src.slice(i, j)
-      push(KEYWORDS.has(word) ? { t: "kw", v: word } : { t: "id", v: word })
+      push(KEYWORDS.has(word) ? { t: "kw", v: word } : { t: "id", v: word }, line, col, line, j - lineStart + 1)
       i = j; continue
     }
     throw new Error(`tokenize: unexpected ${JSON.stringify(c)} at offset ${i}`)
   }
-  push({ t: "eof" })
+  const eofCol = i - lineStart + 1
+  push({ t: "eof" }, line, eofCol, line, eofCol)
   return toks
+}
+
+/// Compute the merged source span covering consumed tokens `[start, end)`.
+function spanBetween(ts: Tok[], start: Pos, end: Pos): Span | undefined {
+  let a = start
+  while (a < end && ts[a]?.t === "nl") a++
+  if (a >= end) a = start
+  let b = Math.min(end, ts.length) - 1
+  while (b > a && (ts[b]?.t === "nl" || ts[b]?.t === "eof")) b--
+  const s = spanOf(ts[a]), e = spanOf(ts[b])
+  if (!s) return undefined
+  if (!e) return s
+  return s.source
+    ? { line: s.line, col: s.col, endLine: e.endLine, endCol: e.endCol, source: s.source }
+    : { line: s.line, col: s.col, endLine: e.endLine, endCol: e.endCol }
+}
+
+/// Extend an existing node's start span through the last token before `end`.
+function extendSpan(startNode: object, ts: Tok[], end: Pos): Span | undefined {
+  const s = spanOf(startNode)
+  if (!s) return undefined
+  let b = Math.min(end, ts.length) - 1
+  while (b >= 0 && (ts[b]?.t === "nl" || ts[b]?.t === "eof")) b--
+  const e = b >= 0 ? spanOf(ts[b]) : undefined
+  if (!e) return s
+  return s.source
+    ? { line: s.line, col: s.col, endLine: e.endLine, endCol: e.endCol, source: s.source }
+    : { line: s.line, col: s.col, endLine: e.endLine, endCol: e.endCol }
 }
 
 // First non-newline token's line at/after `i` — the line an item starts on.
@@ -238,6 +283,13 @@ const optional = <T>(p: P<T>): P<T | null> =>
 
 const lazy = <T>(f: () => P<T>): P<T> => (ts, i) => f()(ts, i)
 
+/// Attach the consumed token span to a parser's returned AST node (out-of-band).
+const spanned = <T extends object>(p: P<T>): P<T> => (ts, i) => {
+  const r = p(ts, i)
+  if (r.ok && !spanOf(r.v)) attachSpan(r.v, spanBetween(ts, i, r.pos))
+  return r
+}
+
 const tokP = (pred: (t: Tok) => boolean, label: string): P<Tok> =>
   (ts, i) => pred(ts[i]) ? ok(ts[i], i + 1) : err(`expected ${label}, got ${describe(ts[i])}`, i)
 
@@ -359,7 +411,7 @@ const postfix = (ts: Tok[], start: Expr, from: Pos): Res<Expr> => {
       for (;;) {
         const argE = lazy(() => expr)(ts, q)
         if (!argE.ok) return argE
-        result = { tag: "app", f: result, x: argE.v }
+        result = attachSpan({ tag: "app", f: result, x: argE.v }, extendSpan(result, ts, argE.pos))
         q = argE.pos
         while (ts[q].t === "nl") q++
         if (ts[q].t === "punct" && (ts[q] as any).v === ",") { q++; continue }
@@ -367,6 +419,7 @@ const postfix = (ts: Tok[], start: Expr, from: Pos): Res<Expr> => {
         return err("',' or ')' in call arguments", q)
       }
       pos = q
+      attachSpan(result, extendSpan(start, ts, pos))
       continue
     }
     if ((ts[pos] as any).v === "idx[") {
@@ -375,22 +428,22 @@ const postfix = (ts: Tok[], start: Expr, from: Pos): Res<Expr> => {
       let q = idxE.pos
       while (ts[q].t === "nl") q++
       if (!(ts[q].t === "punct" && (ts[q] as any).v === "]")) return err("']' to close index", q)
-      result = { tag: "index", target: result, index: idxE.v }
       pos = q + 1
+      result = attachSpan({ tag: "index", target: result, index: idxE.v }, extendSpan(result, ts, pos))
       continue
     }
     pos++
     const field = idP(ts, pos)
     if (!field.ok) return field
-    result = { tag: "proj", target: result, field: field.v }
     pos = field.pos
+    result = attachSpan({ tag: "proj", target: result, field: field.v }, extendSpan(result, ts, pos))
   }
   return ok(result, pos)
 }
 
 // simple/lineSimple differ only in which braced parser and which `if` atom
 // they use (multi-line vs newline-terminated bodies — see ifP / lineIfP).
-const makeSimple = (bracedP: () => P<Expr>, ifAtom: () => P<Expr>): P<Expr> => lazy(() => alt<Expr>(
+const makeSimple = (bracedP: () => P<Expr>, ifAtom: () => P<Expr>): P<Expr> => spanned(lazy(() => alt<Expr>(
   // Parenthesized: ( expr ) or ( expr : expr )
   map(
     seq(punctP("("), skipNl, lazy(() => expr), nl(optional(seq(punctP(":"), skipNl, lazy(() => expr)))), nl(punctP(")"))),
@@ -407,7 +460,7 @@ const makeSimple = (bracedP: () => P<Expr>, ifAtom: () => P<Expr>): P<Expr> => l
   map(numP, (value): Expr => ({ tag: "num", value })),
   holeP,
   map(idP, (name): Expr => ({ tag: "var", name })),
-))
+)))
 const simple: P<Expr> = makeSimple(() => braced, () => ifP)
 
 // Check if position starts a field definition (IDENT ":=" or IDENT ":" ... ":=").
@@ -524,7 +577,8 @@ const makeApp = (atomP: P<Expr>, allowBrace = true): P<Expr> => (ts, i) => {
   while (allowBrace && ts[pos].t === "punct" && (ts[pos] as { v?: string }).v === "{") {
     const arg = lazy(() => braced)(ts, pos)
     if (!(arg.ok && arg.v.tag === "recValue")) break
-    const more = postfix(ts, { tag: "app", f: result, x: arg.v }, arg.pos)
+    const appNode = attachSpan({ tag: "app" as const, f: result, x: arg.v }, extendSpan(result, ts, arg.pos))
+    const more = postfix(ts, appNode, arg.pos)
     if (!more.ok) return more
     result = more.v
     pos = more.pos
@@ -558,7 +612,7 @@ const lineApp: P<Expr> = (ts, i) => {
 // `&&`/`||` reuse the `if` node and therefore SHORT-CIRCUIT — the strict
 // named forms remain `and`/`or`. Chaining is a hard error: parenthesize.
 const INFIX_DESUGAR: Record<string, (a: Expr, b: Expr) => Expr> = {
-  "==": (a, b) => ({ tag: "app", f: { tag: "app", f: { tag: "var", name: "tree_eq" }, x: a }, x: b }),
+  "==": (a, b) => ({ tag: "app", f: { tag: "app", f: { tag: "var", name: "@sugar:tree_eq" }, x: a }, x: b }),
   "&&": (a, b) => ({ tag: "if", cond: a, thenBody: b, elseBody: { tag: "var", name: "false" } }),
   "||": (a, b) => ({ tag: "if", cond: a, thenBody: { tag: "var", name: "true" }, elseBody: b }),
 }
@@ -579,7 +633,7 @@ const makeExpr = (appP: P<Expr>): P<Expr> => {
     if (!rhs.ok) return rhs
     const more = infixOpP(ts, rhs.pos)
     if (more.ok) throw new Error(`parse: infix operators (==, &&, ||) are non-associative — parenthesize`)
-    return ok(INFIX_DESUGAR[op.v](lhs.v, rhs.v[1]), rhs.pos)
+    return ok(attachSpan(INFIX_DESUGAR[op.v](lhs.v, rhs.v[1]), spanBetween(ts, i, rhs.pos)), rhs.pos)
   }
   const p: P<Expr> = (ts, i) => {
     const lhs = operand(ts, i)
@@ -591,7 +645,7 @@ const makeExpr = (appP: P<Expr>): P<Expr> => {
     const rhs = p(ts, pos)
     if (!rhs.ok) return rhs
     return ok(
-      { tag: "binder" as const, params: [{ name: null, type: lhs.v }], body: rhs.v },
+      attachSpan({ tag: "binder" as const, params: [{ name: null, type: lhs.v }], body: rhs.v }, spanBetween(ts, i, rhs.pos)),
       rhs.pos,
     )
   }
@@ -845,16 +899,16 @@ const makeIfLet = (condP: () => P<Expr>, condStopP: () => P<Expr>, bodyP: () => 
   const s = `__ifl${ifletFresh++}`
   const V = (name: string): Expr => ({ tag: "var", name })
   const A = (f: Expr, x: Expr): Expr => ({ tag: "app", f, x })
-  const cond: Expr = A(A(V("tree_eq"), A(V("pair_fst"), V(s))), { tag: "str", value: tag })
-  const payload: Expr = A(V("pair_snd"), V(s))
+  const cond: Expr = A(A(V("@sugar:tree_eq"), A(V("@sugar:pair_fst"), V(s))), { tag: "str", value: tag })
+  const payload: Expr = A(V("@sugar:pair_snd"), V(s))
   const n = binders.length
   let thenB: Expr = thenBody
   if (n > 0) {
     let appd: Expr = { tag: "binder", fat: true, params: binders.map(b => ({ name: b, type: null })), body: thenBody }
     for (let k = 0; k < n; k++) {
       let acc: Expr = payload
-      for (let step = 0; step < k; step++) acc = A(V("pair_snd"), acc)
-      appd = A(appd, k < n - 1 ? A(V("pair_fst"), acc) : acc)
+      for (let step = 0; step < k; step++) acc = A(V("@sugar:pair_snd"), acc)
+      appd = A(appd, k < n - 1 ? A(V("@sugar:pair_fst"), acc) : acc)
     }
     thenB = appd
   }
@@ -1658,21 +1712,26 @@ const recordItems = (name: string, ann: Expr | null | undefined, doc: boolean, l
 const itemP: P<RecMember | RecMember[]> = nl(alt<RecMember | RecMember[]>(openGivenItem, openItem, topFieldP, headFieldP, equationItem))
 
 // Parse source into items.
-export function parseItems(src: string): RecMember[] {
-  const toks = tokenize(src)
+export function parseItems(src: string, sourcePath?: string): RecMember[] {
+  const toks = tokenize(src, sourcePath)
   const items: RecMember[] = []
   let pos = 0
   while (toks[pos].t === "nl") pos++
   while (toks[pos].t !== "eof") {
     const r = itemP(toks, pos)
     if (!r.ok) throw new Error(`parse: ${r.msg}`)
+    const itemSpan = spanBetween(toks, pos, r.pos)
     // Top-level field redefinition is now guard-mediated (a rebind request), so it is
     // legal syntax; the driver rejects UNGUARDED duplicates (the old accident check
     // moved there, where guard knowledge lives). Braced records still reject
     // duplicates at parse time. An `open given { … }` block yields one member per
     // dependency (the desugar to the line form), spliced here.
-    if (Array.isArray(r.v)) items.push(...r.v)
-    else items.push(r.v)
+    if (Array.isArray(r.v)) {
+      for (const it of r.v) { attachSpan(it, itemSpan); items.push(it) }
+    } else {
+      attachSpan(r.v, itemSpan)
+      items.push(r.v)
+    }
     pos = r.pos
     while (toks[pos].t === "nl" || (toks[pos].t === "punct" && (toks[pos] as any).v === ";")) pos++
   }
@@ -1680,8 +1739,8 @@ export function parseItems(src: string): RecMember[] {
 }
 
 // Parse a single expression.
-export function parseExpr(src: string): Expr {
-  const toks = tokenize(src)
+export function parseExpr(src: string, sourcePath?: string): Expr {
+  const toks = tokenize(src, sourcePath)
   let pos = 0
   while (toks[pos].t === "nl") pos++
   const r = expr(toks, pos)
