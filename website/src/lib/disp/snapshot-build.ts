@@ -36,10 +36,16 @@ import {
 // teach that surface; the claim layer the Learn page runs is warmed last.
 const WARMUP = [
   'open use "../kernel/prelude.disp"\n',
+  'open use "../cmp.disp"\n',
+  'open use "../option.disp"\n',
+  'open use "../result.disp"\n',
+  'open use "../nat.disp"\n',
+  'open use "../list.disp"\n',
+  'open use "../std.disp"\n',
   'open use "../../archive/live-kernel/kernel/prelude.disp"\n',
   'open use "../../archive/live-kernel/std/nat.disp"\n',
   'open use raw "../prelude.disp" {}\n',
-  'open use raw "../claim.disp" {}\nopen use raw "fixtures.disp" {}\nopen use raw "../../IDEAS.disp" {}\nopen use raw "../confirm.disp" {}\nopen use raw "confirmer.test.disp" {}\n'
+  'open use raw "../core/claim.disp" {}\nopen use raw "fixtures.disp" {}\nopen use raw "../../IDEAS.disp" {}\nopen use raw "../confirm.disp" {}\nopen use raw "confirmer.test.disp" {}\n'
 ]
 
 const asTree = (s: RustEagerBrowserSession): Session<Tree> => s as unknown as Session<Tree>
@@ -55,18 +61,18 @@ export async function buildSnapshot(
   const rootPath = `${repoRoot}/lib/tests/playground.disp`
   const virtualRoots = ['/lib/', '/archive/live-kernel/', '/IDEAS.disp']
   const toVirtual = (key: string): string => {
-    const [abs, ...rest] = key.split('\0')
-    if (!abs.startsWith(repoRoot + '/')) throw new Error(`snapshot: cache key outside the repo: ${abs}`)
+    const [fe, abs, ...rest] = key.split('\0')
+    if (!abs || !abs.startsWith(repoRoot + '/')) throw new Error(`snapshot: cache key outside the repo: ${key}`)
     const rel = abs.slice(repoRoot.length)
     if (!virtualRoots.some((r) => rel.startsWith(r)))
       throw new Error(`snapshot: cache key outside the bundled library roots: ${abs}`)
-    return [rel, ...rest].join('\0')
+    return [fe, rel, ...rest].join('\0')
   }
   const toReal = (key: string): string => {
-    const [abs, ...rest] = key.split('\0')
-    if (!virtualRoots.some((r) => abs.startsWith(r)))
-      throw new Error(`snapshot: unexpected virtual key ${abs}`)
-    return [repoRoot + abs, ...rest].join('\0')
+    const [fe, abs, ...rest] = key.split('\0')
+    if (!abs || !virtualRoots.some((r) => abs.startsWith(r)))
+      throw new Error(`snapshot: unexpected virtual key ${key}`)
+    return [fe, repoRoot + abs, ...rest].join('\0')
   }
 
   const t0 = performance.now()
@@ -81,7 +87,8 @@ export async function buildSnapshot(
         if (items % 100 === 0) process.stdout.write(`\r  elaborated ${items} items…`)
       }
     })
-    process.stdout.write(`\r  ${src.trim()}  (${((performance.now() - t) / 1000).toFixed(1)}s, ${items} items total)\n`)
+    sa.clearCaches()
+    process.stdout.write(`\r  ${src.trim()}  (${((performance.now() - t) / 1000).toFixed(1)}s, ${items} items total, ${(sa.memoryBytes() / 1e6).toFixed(0)}MB)\n`)
   }
 
   const hash = await vfsHash(vfs)

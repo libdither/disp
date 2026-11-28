@@ -50,7 +50,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
       case 'run': {
         if (!runner) throw new Error('worker not initialized')
         const onItem = (ev: ItemEvent) => post(ev)
-        const outcome = runner.run(msg.source, msg.path, msg.wantDefPretty ?? false, onItem)
+        const outcome = runner.run(msg.source, msg.path, msg.wantDefPretty ?? false, onItem, msg.verifyTypes ?? false)
         post({ type: 'result', id: msg.id, outcome })
         break
       }

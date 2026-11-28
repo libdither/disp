@@ -12,7 +12,9 @@
   import DispEditor, { type EditorApi, type LineMark } from '$lib/components/DispEditor.svelte'
   import Inspector from '$lib/playground/Inspector.svelte'
   import Sidebar, { type OutlineRow } from '$lib/playground/Sidebar.svelte'
+  import Guide from '$lib/playground/Guide.svelte'
   import Palette, { type PaletteItem } from '$lib/playground/Palette.svelte'
+  import { lessons, lessonById, type LessonWatch } from '$lib/playground/curriculum'
   import type { Subject } from '$lib/playground/subject'
   import {
     indexBuffer,
@@ -33,12 +35,20 @@
   const LS_TABS = 'disp-playground-tabs'
   const LS_USER = 'disp-playground-userfiles'
   const LS_LAYOUT = 'disp-playground-layout'
+  const LS_LESSON = 'disp-playground-lesson'
+  const LS_DONE = 'disp-playground-completed'
+  const LS_VERIFY = 'disp-playground-verify'
 
   // svelte-ignore non_reactive_update
   let editorApi: EditorApi | undefined
   let currentDoc = $state('')
-  let exampleId = $state('walkthrough')
-  let initialDoc = examples[0].source
+  let exampleId = $state('')
+  let activeLessonId = $state(lessons[0].id)
+  const activeLesson = $derived(lessonById(activeLessonId) ?? lessons[0])
+  let completedLessons = $state<Set<string>>(new Set())
+  let breakMode = $state(false)
+  let checkTypes = $state(false)
+  let initialDoc = lessons[0].starter
 
   // ---- tabs -----------------------------------------------------------------
   // The scratch buffer plus opened library files. Each tab runs at its own path
@@ -340,7 +350,19 @@
         })
       else marks.push({ line, focusFrom: t.line, kind: 'fail', note: '✗', block: `got  ${t.lhs ?? '?'}\nwant ${t.rhs ?? '?'}` })
     }
-    if (out.error && out.errorLine) marks.push({ line: out.errorLine, kind: 'error', block: out.error })
+    const markedErrLines = new Set<number>()
+    for (const te of out.typeErrors ?? []) {
+      if (!te.line) continue
+      markedErrLines.add(te.line)
+      marks.push({
+        line: te.line,
+        kind: 'error',
+        block: `Type check rejected \`${te.name}\`${te.reason ? `: ${te.reason}` : ': value does not satisfy its declared type'}`
+      })
+    }
+    if (out.error && out.errorLine && !markedErrLines.has(out.errorLine)) {
+      marks.push({ line: out.errorLine, kind: 'error', block: out.error })
+    }
     return marks
   }
 
@@ -370,20 +392,30 @@
     }
   }
 
+  let queuedRun: { source: string; label: string } | null = null
+  let runSeq = 0
   async function execute(source: string, label: string) {
-    if (busy) return
+    if (busy) {
+      queuedRun = { source, label }
+      return
+    }
     busy = true
+    const seq = ++runSeq
     const forTab = activeTabId
+    const verify = checkTypes && activeTab().kind === 'scratch'
     progress = { label: disp.kernelLoaded ? label : `${label}: the first run checks the kernel too`, count: 0, current: '' }
     try {
-      const out = await disp.run(source, { wantDefPretty: true, path: activeTab().path })
-      if (forTab === activeTabId) applyOutcome(out, (progress?.count ?? 0) > 100)
+      const out = await disp.run(source, { wantDefPretty: true, path: activeTab().path, verifyTypes: verify })
+      if (forTab === activeTabId && seq === runSeq && !queuedRun) applyOutcome(out, (progress?.count ?? 0) > 100)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       if (msg !== 'interrupted') toast(msg, 'warn')
     } finally {
       progress = null
       busy = false
+      const next = queuedRun
+      queuedRun = null
+      if (next) void execute(next.source, next.label)
     }
   }
 
@@ -507,6 +539,9 @@
     const ex = examples.find((x) => x.id === id)
     if (!ex) return
     exampleId = id
+    breakMode = false
+    checkTypes = false
+    persistVerify()
     if (activeTabId !== 'scratch') activate('scratch')
     editorApi?.setDoc(ex.source)
     currentDoc = ex.source
@@ -517,6 +552,129 @@
     persist()
     if (live && canAutoRun(ex.source) && !busy) void execute(ex.source, 'checking the example')
   }
+
+  // ---- guided curriculum ----------------------------------------------------
+  function persistCompleted() {
+    try {
+      localStorage.setItem(LS_DONE, JSON.stringify([...completedLessons]))
+    } catch {}
+  }
+  function persistVerify() {
+    try {
+      localStorage.setItem(LS_VERIFY, checkTypes ? '1' : '0')
+    } catch {}
+  }
+  function setCheckTypes(v: boolean) {
+    checkTypes = v
+    persistVerify()
+    const doc = editorApi?.getDoc() ?? currentDoc
+    if (!busy && canAutoRun(doc)) void execute(doc, v ? 'typechecking' : 'running')
+  }
+
+  function findLineMatching(text: string, needle: string): number | null {
+    const lines = text.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(needle)) return i + 1
+    }
+    return null
+  }
+
+  function watchTarget(w: LessonWatch) {
+    if ('expr' in w.target) {
+      inspectExpr(w.target.expr)
+      if (narrow) pane = 'tree'
+      return
+    }
+    const doc = editorApi?.getDoc() ?? currentDoc
+    const line = findLineMatching(doc, w.target.lineMatch)
+    if (line != null) {
+      pinned = false
+      goto(line)
+      setTimeout(updateSubject, 80)
+      if (narrow) pane = 'tree'
+    }
+  }
+
+  let pendingFocusMatch: string | null = null
+  function loadLesson(id: string, opts?: { source?: string; breakIt?: boolean }) {
+    const l = lessonById(id)
+    if (!l) return
+    activeLessonId = l.id
+    exampleId = ''
+    breakMode = opts?.breakIt ?? false
+    checkTypes = l.verifyTypes
+    persistVerify()
+    const src = opts?.source ?? (breakMode && l.breakIt ? l.breakIt.snippet : l.starter)
+    if (activeTabId !== 'scratch') activate('scratch')
+    editorApi?.setDoc(src)
+    currentDoc = src
+    outcome = null
+    subject = null
+    pinned = false
+    index = bufferIndex()
+    void refreshScope()
+    try {
+      localStorage.setItem(LS_LESSON, l.id)
+    } catch {}
+    persist()
+    const firstWatch = !breakMode ? l.watches[0] : undefined
+    pendingFocusMatch = firstWatch && 'lineMatch' in firstWatch.target ? firstWatch.target.lineMatch : null
+    if (live && canAutoRun(src)) void execute(src, l.verifyTypes ? 'checking lesson' : 'running lesson')
+  }
+
+  const activeLessonIdx = $derived(lessons.findIndex((l) => l.id === activeLesson.id))
+  const hasPrevLesson = $derived(activeLessonIdx > 0)
+  const hasNextLesson = $derived(activeLessonIdx >= 0 && activeLessonIdx < lessons.length - 1)
+  const nextLessonLabel = $derived.by(() => {
+    const nxt = lessons[activeLessonIdx + 1]
+    if (!nxt) return 'Done'
+    if (nxt.track !== activeLesson.track) return 'Start Track 2: Type Theory'
+    return `Next: ${nxt.number}. ${nxt.title}`
+  })
+  function prevLesson() {
+    if (hasPrevLesson) loadLesson(lessons[activeLessonIdx - 1].id)
+  }
+  function nextLesson() {
+    if (hasNextLesson) loadLesson(lessons[activeLessonIdx + 1].id)
+  }
+
+  const goalMet = $derived.by(() => {
+    if (breakMode || activeTabId !== 'scratch' || !outcome || outcome.error || !outcome.ok) return false
+    if (activeLesson.verifyTypes && outcome.typeChecked !== true) return false
+    const g = activeLesson.goal
+    if (g.minTests && passCount < g.minTests) return false
+    if (g.requireDefs && !g.requireDefs.every((name) => outcome!.defs.some((d) => d.name === name))) return false
+    return true
+  })
+
+  const breakTriggered = $derived.by(() => {
+    if (!breakMode || !activeLesson.breakIt || !outcome) return false
+    const k = activeLesson.breakIt.expectKind
+    if (k === 'type-error') return !!outcome.error && (outcome.typeChecked === false || (outcome.typeErrors?.length ?? 0) > 0)
+    if (k === 'error') return !!outcome.error
+    return failCount > 0
+  })
+
+  $effect(() => {
+    if (goalMet && !completedLessons.has(activeLesson.id)) {
+      const next = new Set(completedLessons)
+      next.add(activeLesson.id)
+      completedLessons = next
+      persistCompleted()
+    }
+  })
+
+  $effect(() => {
+    if (outcome && pendingFocusMatch) {
+      const needle = pendingFocusMatch
+      pendingFocusMatch = null
+      const line = findLineMatching(editorApi?.getDoc() ?? currentDoc, needle)
+      if (line != null) {
+        goto(line)
+        setTimeout(updateSubject, 60)
+      }
+    }
+  })
 
   async function share() {
     const doc = editorApi?.getDoc() ?? currentDoc
@@ -705,10 +863,10 @@
 
   // ---- layout ---------------------------------------------------------------
   let sideOpen = $state(true)
-  let sideTab = $state<'outline' | 'files' | 'examples'>('outline')
+  let sideTab = $state<'guide' | 'outline' | 'files' | 'examples'>('guide')
   let inspOpen = $state(true)
-  let sideW = $state(232)
-  let inspW = $state(0.42)
+  let sideW = $state(312)
+  let inspW = $state(0.4)
   // narrow screens show one pane at a time
   let pane = $state<'code' | 'tree' | 'side'>('code')
   let shellW = $state(1200)
@@ -744,6 +902,7 @@
       { id: 'run', title: 'Run file', hint: `${mod}Enter`, run: runFile },
       { id: 'cursor', title: 'Run to cursor', hint: 'Shift+Enter', run: runToCursor },
       { id: 'live', title: live ? 'Turn off live checking' : 'Turn on live checking', run: () => setLive(!live) },
+      { id: 'types', title: checkTypes ? 'Turn off module typechecking' : 'Turn on module typechecking', detail: 'verify `:` annotations via the kernel', run: () => setCheckTypes(!checkTypes) },
       { id: 'share', title: 'Copy a share link', detail: 'the code travels in the URL', run: () => void share() },
       { id: 'side', title: sideOpen ? 'Hide the sidebar' : 'Show the sidebar', hint: `${mod}B`, run: () => toggleSide() },
       { id: 'insp', title: inspOpen ? 'Hide the tree view' : 'Show the tree view', hint: `${mod}J`, run: () => toggleInsp() },
@@ -792,8 +951,18 @@
     }
     const q = raw.trim().toLowerCase()
     const files = (filePaths ?? []).map((p) => ({ id: p, title: p.split('/').pop() ?? p, detail: shortPath(p), run: () => void openFile(p) }))
+    const guideItems = lessons.map((l) => ({
+      id: `lesson:${l.id}`,
+      title: `${l.track === 'trees' ? 'Track 1' : 'Track 2'} · ${l.number}. ${l.title}`,
+      detail: 'guide lesson',
+      run: () => {
+        sideTab = 'guide'
+        sideOpen = true
+        loadLesson(l.id)
+      }
+    }))
     const exs = examples.map((x) => ({ id: `ex:${x.id}`, title: x.label, detail: 'example', run: () => loadExample(x.id) }))
-    return rank(q, paletteFilesFirst ? [...files, ...exs, ...commands()] : [...commands(), ...exs, ...files])
+    return rank(q, paletteFilesFirst ? [...files, ...guideItems, ...exs, ...commands()] : [...commands(), ...guideItems, ...exs, ...files])
   }
   // on a narrow screen these switch the one pane shown instead
   function toggleSide() {
@@ -859,14 +1028,20 @@
     void (async () => {
       try {
         live = localStorage.getItem(LS_LIVE) !== '0'
-        aboutOpen = !localStorage.getItem(LS_WELCOME)
+        aboutOpen = false
         userFiles = JSON.parse(localStorage.getItem(LS_USER) ?? '{}') as Record<string, string>
+        const done = JSON.parse(localStorage.getItem(LS_DONE) ?? '[]') as string[]
+        if (Array.isArray(done)) completedLessons = new Set(done)
+        const savedLesson = localStorage.getItem(LS_LESSON)
+        if (savedLesson && lessonById(savedLesson)) activeLessonId = savedLesson
+        const savedVerify = localStorage.getItem(LS_VERIFY)
+        if (savedVerify != null) checkTypes = savedVerify === '1'
         const l = JSON.parse(localStorage.getItem(LS_LAYOUT) ?? '{}')
         sideOpen = l.sideOpen ?? true
-        sideW = l.sideW ?? 232
+        sideW = l.sideW ?? 312
         inspOpen = l.inspOpen ?? true
-        inspW = l.inspW ?? 0.42
-        sideTab = l.sideTab ?? 'outline'
+        inspW = l.inspW ?? 0.4
+        sideTab = l.sideTab ?? 'guide'
       } catch {}
       const hash = location.hash.slice(1)
       let loaded = false
@@ -878,8 +1053,17 @@
           loaded = true
         }
       }
-      const wanted = new URLSearchParams(location.search).get('example')
+      const params = new URLSearchParams(location.search)
+      const wantedLesson = params.get('lesson')
+      if (!loaded && wantedLesson && lessonById(wantedLesson)) {
+        sideTab = 'guide'
+        sideOpen = true
+        loadLesson(wantedLesson)
+        loaded = true
+      }
+      const wanted = params.get('example')
       if (!loaded && wanted && examples.some((x) => x.id === wanted)) {
+        sideTab = 'outline'
         loadExample(wanted)
         loaded = true
       }
@@ -891,7 +1075,16 @@
           if (saved) {
             currentDoc = saved
             editorApi?.setDoc(saved)
-          } else currentDoc = initialDoc
+          } else {
+            // Fresh visit: start straight in Track 1, Lesson 1 with the Guide open
+            const first = lessons[0]
+            activeLessonId = first.id
+            checkTypes = first.verifyTypes
+            sideTab = 'guide'
+            currentDoc = first.starter
+            const w0 = first.watches[0]
+            if (w0 && 'lineMatch' in w0.target) pendingFocusMatch = w0.target.lineMatch
+          }
         } catch {
           currentDoc = initialDoc
         }
@@ -1012,7 +1205,32 @@
             pane = 'code'
             loadExample(id)
           }}
-        />
+        >
+          {#snippet guide()}
+            <Guide
+              lesson={activeLesson}
+              completed={completedLessons}
+              {breakMode}
+              {breakTriggered}
+              {goalMet}
+              {busy}
+              onSelectLesson={(id) => {
+                pane = 'code'
+                loadLesson(id)
+              }}
+              onReset={() => loadLesson(activeLesson.id)}
+              onSolve={() => loadLesson(activeLesson.id, { source: activeLesson.solution })}
+              onBreakIt={() => loadLesson(activeLesson.id, { breakIt: true })}
+              onExitBreak={() => loadLesson(activeLesson.id)}
+              onWatch={watchTarget}
+              onNext={nextLesson}
+              onPrev={prevLesson}
+              hasPrev={hasPrevLesson}
+              hasNext={hasNextLesson}
+              nextLabel={nextLessonLabel}
+            />
+          {/snippet}
+        </Sidebar>
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="grip" onpointerdown={(e) => drag('side', e)}></div>
@@ -1100,11 +1318,19 @@
           <span class="good">✓ {passCount}</span>{#if failCount > 0}&nbsp;<span class="bad">✗ {failCount}</span>{/if}
         </button>
       {/if}
+      {#if outcome.typeChecked && !outcome.error}
+        <span class="sep">·</span><span class="good" title="All top-level type annotations passed the kernel">✓ types</span>
+      {/if}
       {#if outcome.steps > 0}<span class="sep">·</span><span class="dim" title="Evaluator steps this run">{fmtSteps(outcome.steps)} {outcome.steps === 1 ? 'step' : 'steps'}</span>{/if}
     {/if}
     <span class="grow"></span>
     {#if !disp.kernelLoaded && !busy && disp.status === 'ready'}
       <button class="stlink" onclick={() => void preloadKernel()}>Load kernel</button>
+    {/if}
+    {#if checkTypes || /\buse\s+(?!raw\b)/.test(code(currentDoc))}
+      <button class="stlink" class:quiet={!checkTypes} onclick={() => setCheckTypes(!checkTypes)} title="Verify top-level `:` annotations with the kernel" aria-pressed={checkTypes}>
+        <i class="livedot" class:on={checkTypes}></i>Types
+      </button>
     {/if}
     <button class="stlink" class:quiet={live} onclick={() => setLive(!live)} title="Re-check as you type" aria-pressed={live}>
       <i class="livedot" class:on={live}></i>Live
@@ -1118,7 +1344,7 @@
 
   {#if narrow}
     <nav class="panes" aria-label="panes">
-      <button class:on={pane === 'side'} onclick={() => (pane = 'side')}>Outline</button>
+      <button class:on={pane === 'side'} onclick={() => (pane = 'side')}>Guide</button>
       <button class:on={pane === 'code'} onclick={() => (pane = 'code')}>Code</button>
       <button class:on={pane === 'tree'} onclick={() => (pane = 'tree')}>Tree</button>
     </nav>

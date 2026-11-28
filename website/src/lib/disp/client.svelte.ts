@@ -165,7 +165,7 @@ class DispClient {
     return this.#kernelPromise
   }
 
-  async run(source: string, opts?: { wantDefPretty?: boolean; path?: string }): Promise<RunOutcome> {
+  async run(source: string, opts?: { wantDefPretty?: boolean; path?: string; verifyTypes?: boolean }): Promise<RunOutcome> {
     await this.init()
     this.status = 'running'
     try {
@@ -173,7 +173,8 @@ class DispClient {
         type: 'run',
         source,
         path: opts?.path,
-        wantDefPretty: opts?.wantDefPretty
+        wantDefPretty: opts?.wantDefPretty,
+        verifyTypes: opts?.verifyTypes
       })
     } finally {
       if (this.status === 'running') this.status = 'ready'

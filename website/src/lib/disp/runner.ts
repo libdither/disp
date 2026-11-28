@@ -144,6 +144,8 @@ export class DispRunner {
   #byName = new Map<string, number>()
   // name -> handle for the most recent run's top-level defs
   #lastDefs = new Map<string, number>()
+  // unique transient module counter so driver.ts's parsedModuleCache never serves stale ASTs
+  #checkSeq = 0
 
   constructor(wasmBytes: ArrayBuffer) {
     this.#wasmBytes = wasmBytes
@@ -192,7 +194,11 @@ export class DispRunner {
     if (vfs.delete(p)) this.#invalidatePath(p)
   }
   #invalidatePath(abs: string): void {
-    const stale = (k: string) => k === abs || k.startsWith(abs + '\0')
+    const stale = (k: string) => {
+      if (k === abs) return true
+      const parts = k.split('\0')
+      return parts[0] === abs || parts[1] === abs
+    }
     const cache = moduleCacheBySession.get(this.#session as unknown as Session<Tree>)
     if (cache) for (const k of [...cache.keys()]) if (stale(k)) cache.delete(k)
     for (const k of [...verifiedModules]) if (stale(k)) verifiedModules.delete(k)
@@ -272,7 +278,8 @@ export class DispRunner {
     source: string,
     path: string | undefined,
     wantDefPretty: boolean,
-    onItem: (e: ItemEvent) => void
+    onItem: (e: ItemEvent) => void,
+    verifyTypes = false
   ): RunOutcome {
     const session = this.#session as unknown as Session<Tree>
     const t0 = performance.now()
@@ -374,6 +381,78 @@ export class DispRunner {
       })
     }
     if (!outcome.error) outcome.ok = outcome.tests.every((t) => t.pass)
+    // Optional module type verification: root files never run `check_module`, so
+    // when verifyTypes is on (e.g. Track 2 lessons or the playground's Check types
+    // toggle), wrap the buffer as a transient virtual module and `open use` it to
+    // run the real kernel checker, mapping failing entry names back to lines.
+    if (!outcome.error && verifyTypes) {
+      const codeOnly = source.replace(/\/\/.*$/gm, '')
+      const hasTypedImport = /\buse\s+(?!raw\b)/.test(codeOnly)
+      const isParametric = /^\s*(?:open\s+)?given\b/m.test(codeOnly)
+      if (hasTypedImport && !isParametric) {
+        const effPath = path ?? PLAYGROUND_PATH
+        const dir = effPath.slice(0, effPath.lastIndexOf('/')) || '/lib/tests'
+        const modName = `__playground_check_${++this.#checkSeq}.disp`
+        const modPath = `${dir}/${modName}`
+        this.writeFile(modPath, source)
+        try {
+          parseProgram(`open use "./${modName}"\n`, effPath, { session })
+          outcome.typeChecked = true
+          outcome.typeErrors = []
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          outcome.ok = false
+          outcome.typeChecked = false
+          const entryMatch = msg.match(/failing entr(?:y|ies):\s*(.+)$/)
+          if (entryMatch) {
+            // Split top-level comma-separated entries respecting nested parentheses/quotes
+            const parts: string[] = []
+            const raw = entryMatch[1]
+            let depth = 0
+            let inStr = false
+            let start = 0
+            for (let i = 0; i < raw.length; i++) {
+              const ch = raw[i]
+              if (ch === '"' && raw[i - 1] !== '\\') inStr = !inStr
+              else if (!inStr) {
+                if (ch === '(') depth++
+                else if (ch === ')') depth = Math.max(0, depth - 1)
+                else if (ch === ',' && depth === 0) {
+                  parts.push(raw.slice(start, i))
+                  start = i + 1
+                }
+              }
+            }
+            parts.push(raw.slice(start))
+
+            const failures: { name: string; line?: number; reason?: string }[] = []
+            for (const part of parts) {
+              const m = part.trim().match(/^([A-Za-z_][\w.']*)(?:\s*\((.*)\))?$/)
+              if (!m) continue
+              const name = m[1]
+              const rawReason = m[2]?.trim()
+              // Keep clean quoted string reasons (e.g. "Stuck triaging call"); hide raw tree dumps
+              const strReason = rawReason?.match(/^"([^"]+)"$/)?.[1]
+              const reason = strReason && strReason !== 'Fault' ? strReason : undefined
+              const line = rootDefs.get(name)?.line ?? guessErrorLine(`'${name}'`, source)
+              failures.push({ name, line, reason })
+            }
+            outcome.typeErrors = failures
+            const first = failures[0]
+            outcome.errorLine = first?.line ?? guessErrorLine(msg, source)
+            outcome.error =
+              failures.length === 1
+                ? `Type check rejected \`${first.name}\`${first.reason ? `: ${first.reason}` : ': value does not satisfy its declared type'}`
+                : `Type check rejected ${failures.map((f) => `\`${f.name}\``).join(', ')}`
+          } else {
+            outcome.error = msg
+            outcome.errorLine = guessErrorLine(msg, source)
+          }
+        } finally {
+          this.removeFile(modPath)
+        }
+      }
+    }
     outcome.costs = costs
     outcome.elapsedMs = performance.now() - t0
     outcome.steps = this.#session.stats().steps - steps0

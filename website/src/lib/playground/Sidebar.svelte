@@ -1,5 +1,6 @@
 <script lang="ts">
-  // The left rail: this file's outline (values, verdicts, costs), the library's files, the examples.
+  // The left rail: the guided curriculum, this file's outline (values, verdicts, costs), the library's files, the examples.
+  import type { Snippet } from 'svelte'
   import type { Example } from '$lib/disp/examples'
 
   export interface OutlineRow {
@@ -16,7 +17,8 @@
   type DirNode = { name: string; path: string; dirs: DirNode[]; files: { path: string; name: string }[] }
 
   interface Props {
-    tab: 'outline' | 'files' | 'examples'
+    tab: 'guide' | 'outline' | 'files' | 'examples'
+    guide?: Snippet
     rows: OutlineRow[]
     activeLine: number | null
     filePaths: string[] | null
@@ -25,14 +27,14 @@
     activePath: string
     examples: Example[]
     exampleId: string
-    onTab: (t: 'outline' | 'files' | 'examples') => void
+    onTab: (t: 'guide' | 'outline' | 'files' | 'examples') => void
     onGoto: (line: number) => void
     onOpenFile: (path: string, permanent?: boolean) => void
     onNewFile: (name: string) => void
     onDeleteFile: (path: string) => void
     onExample: (id: string) => void
   }
-  let { tab, rows, activeLine, filePaths, openPaths, userFiles, activePath, examples, exampleId, onTab, onGoto, onOpenFile, onNewFile, onDeleteFile, onExample }: Props = $props()
+  let { tab, guide, rows, activeLine, filePaths, openPaths, userFiles, activePath, examples, exampleId, onTab, onGoto, onOpenFile, onNewFile, onDeleteFile, onExample }: Props = $props()
 
   let filter = $state('')
   let onlyFailing = $state(false)
@@ -93,12 +95,15 @@
 
 <aside class="side">
   <div class="tabs" role="tablist">
+    <button role="tab" class:on={tab === 'guide'} aria-selected={tab === 'guide'} onclick={() => onTab('guide')}>Guide</button>
     <button role="tab" class:on={tab === 'outline'} aria-selected={tab === 'outline'} onclick={() => onTab('outline')}>Outline</button>
     <button role="tab" class:on={tab === 'files'} aria-selected={tab === 'files'} onclick={() => onTab('files')}>Files</button>
     <button role="tab" class:on={tab === 'examples'} aria-selected={tab === 'examples'} onclick={() => onTab('examples')}>Examples</button>
   </div>
 
-  {#if tab === 'outline'}
+  {#if tab === 'guide' && guide}
+    {@render guide()}
+  {:else if tab === 'outline'}
     <div class="filter">
       <input bind:value={filter} placeholder="Filter names" spellcheck="false" autocomplete="off" aria-label="filter names" />
       {#if failing > 0}

@@ -35,6 +35,8 @@ export type WorkerRequest =
       path?: string
       // pretty-print top-level def values in the response (REPL cell mode)
       wantDefPretty?: boolean
+      // also verify top-level `:` annotations by checking the buffer as an `open use`d module
+      verifyTypes?: boolean
     }
   | { id: number; type: 'eval'; context: string; expr: string; path?: string; wantDefPretty?: boolean }
   // Re-render a subtree by session handle: raw (skip nat/string/name
@@ -159,10 +161,20 @@ export interface TestResult {
   rhsNode?: ValueNode
 }
 
+export interface TypeCheckFailure {
+  name: string
+  line?: number
+  reason?: string
+}
+
 export interface RunOutcome {
   ok: boolean
   error?: string
   errorLine?: number
+  // True when the buffer's `:` annotations were verified via the module checker
+  typeChecked?: boolean
+  // Per-entry failures reported by the module checker (mapped back to buffer lines)
+  typeErrors?: TypeCheckFailure[]
   // Every top-level binding of the run — exported fields AND private lets —
   // in definition order, with its source extent and (when requested) the
   // pretty-printed value. Survives a mid-file error: bindings elaborated

@@ -143,10 +143,10 @@ const asTreeSession = (s: Session<number>): Session<Tree> => s as unknown as Ses
 const asTree = (h: number): Tree => h as unknown as Tree
 const asHandle = (t: Tree): number => t as unknown as number
 
-// A cache key is restorable iff its fill component carries no session-scoped
-// intern ids (`#n`). Plain files (""), raw ("d"/"u" per given), and the
-// functor sentinel are all per-content-stable.
-const restorableKey = (key: string): boolean => !(key.split('\0')[2] ?? '').includes('#')
+// A cache key is `${frontend}\0${abs}\0${raw}\0${fillKey}`. It is restorable
+// iff its fill component carries no session-scoped intern ids (`#n`). Plain
+// files (""), raw ("d"/"u" per given), and the functor sentinel are stable.
+const restorableKey = (key: string): boolean => !(key.split('\0')[3] ?? '').includes('#')
 
 // `mapKey` translates cache keys at the serialization boundary: the builder
 // elaborates against the real filesystem (real abs paths) but ships keys in
