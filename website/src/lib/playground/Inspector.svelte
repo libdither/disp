@@ -480,7 +480,17 @@
     const next = layoutScene(store, [root], { open, closed }, { nextPath: trace.nextPath(root), alsoNext: mode === 'parallel' ? trace.readyPaths(root) : undefined, labels, sk: readsSk(), foldData: labels ? 40 : undefined, keepOpen, plainNats: tab === 'try' && symbols.length > 0 && !tour, reads: reads(frame), repeats: repeats(), wasPod, foldRootData })
     lastNearOpen = next.nearOpen
     lastPods = new Set(next.nodes.filter((n) => n.kind === K_POD).map((n) => n.id))
-    if (ms > 0 && was >= lead && at > was && at - was <= 4) next.guide = stepGuide(store, trace, was - lead)
+    if (ms > 0 && was >= lead && at > was && at - was <= 4) {
+      // When hideBuild skips build steps alongside a real rule (e.g. K), guide from the real firing frame
+      let guideFrom = was - lead
+      for (let k = was - lead; k < frame; k++) {
+        if (!isBuild(trace.rules[k + 1])) {
+          guideFrom = k
+          break
+        }
+      }
+      next.guide = stepGuide(store, trace, guideFrom)
+    }
     next.reach = runReach()
     show(next)
   }
@@ -606,11 +616,17 @@
     if (hideBuild) while (f < trace.last && lead + f !== bindEnd && absorbed(f)) f++
     if (stopAt !== null && playing) f = Math.min(f, stopAt - lead)
     // a binder rewrite moves more than a rule firing, and a K drop, an S copy or a triage pick needs a beat to see
-    const r = trace.rules[frame + 1]
+    let r = trace.rules[frame + 1]
+    for (let k = frame + 1; k <= f; k++) {
+      if (!isBuild(trace.rules[k])) {
+        r = trace.rules[k]
+        break
+      }
+    }
     // a binder that knocks its variable off has further to fly
     const path = r === R_BIND ? trace.nextPath(trace.frames[frame]) : null
     const knocks = path ? ['id', 'eta'].includes(store.bindKind(trace.subterm(trace.frames[frame], path)) ?? '') : false
-    goto(f, ms > 0 && knocks ? Math.max(ms, 460) : ms > 0 && r === R_BIND ? Math.max(ms, 340) : ms > 0 && !playing && (r === R_K || r === R_S || r === R_F) ? Math.max(ms, 280) : ms)
+    goto(f, ms > 0 && (knocks || (!playing && r === R_K)) ? Math.max(ms, 460) : ms > 0 && r === R_BIND ? Math.max(ms, 340) : ms > 0 && !playing && (r === R_S || r === R_F) ? Math.max(ms, 300) : ms)
     return true
   }
   function stepBack() {
@@ -819,7 +835,7 @@
       if (end - from <= 1) {
         stopAt = null
         at = lead + end
-        draw(320)
+        draw(store.rule[n.id] === R_K ? 460 : 320)
       } else {
         // what it waits on fires first, one step at a time, then it does
         stopAt = lead + end

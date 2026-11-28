@@ -1009,15 +1009,25 @@
   type Landing = 'gets' | 'drop' | 'returns' | 'looks'
   /// Where an argument goes once the combinator at `root` is called on it: S hands it to both
   /// operands, K drops it, I gives it back, anything else is applied to it.
-  function argFlow(nodes: VNode[], at: number): { root: number; land: Map<number, Landing>; route: Set<number>; label: string } | null {
+  function argFlow(nodes: VNode[], at: number): {
+    root: number
+    land: Map<number, Landing>
+    route: Set<number>
+    label: string
+    dropArm?: Set<number>
+    dropRoot?: number
+    keepRoot?: number
+  } | null {
     const kids: number[][] = nodes.map(() => [])
     for (let i = 0; i < nodes.length; i++) if (nodes[i].parent >= 0) kids[nodes[i].parent].push(i)
     let root = at
+    let argNode = -1
     let label = 'x'
     const n = nodes[at]
     if (n.kind === K_APP) {
       const [f, x] = kids[at]
       root = f
+      argNode = x ?? -1
       const t = nodes[x]?.text
       if (t && t.length <= 8 && (nodes[x].kind === K_VAR || nodes[x].kind === K_POD)) label = t
     } else if (n.group >= 0) root = n.group
@@ -1045,7 +1055,25 @@
     visit(root, 0)
     const route = new Set<number>()
     for (const d of land.keys()) for (let i = d; i !== root && i >= 0; i = nodes[i].parent) route.add(i)
-    return { root, land, route, label }
+    // Direct K application `K(kept)(dropped)`: mark the right arm as deleted and highlight the kept payload
+    let dropArm: Set<number> | undefined
+    let dropRoot: number | undefined
+    let keepRoot: number | undefined
+    if (n.kind === K_APP && argNode >= 0 && nodes[root].comb === 'K') {
+      const ops = operands(root)
+      if (ops.length === 1) {
+        dropRoot = argNode
+        keepRoot = ops[0]
+        dropArm = new Set<number>()
+        const stack = [argNode]
+        while (stack.length) {
+          const cur = stack.pop()!
+          dropArm.add(cur)
+          for (const c of kids[cur]) stack.push(c)
+        }
+      }
+    }
+    return { root, land, route, label, dropArm, dropRoot, keepRoot }
   }
 
   function draw() {
@@ -1352,6 +1380,20 @@
       for (const i of flow.route) curve(nodes[i].parent, i)
       ctx.stroke()
       ctx.setLineDash([])
+      if (flow.dropArm && flow.dropRoot != null) {
+        // Highlight the arm K is about to discard in dashed red
+        ctx.strokeStyle = C.err
+        ctx.lineWidth = lw * 2.6
+        ctx.setLineDash([5, 4])
+        ctx.globalAlpha = fade * 0.85
+        ctx.beginPath()
+        for (const i of flow.dropArm) {
+          const p = nodes[i].parent
+          if (p >= 0) curve(p, i)
+        }
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
       ctx.globalAlpha = fade
     }
 
@@ -1365,6 +1407,7 @@
       if (!vis(x, y)) continue
       const hot = n.id === hoverId
       fade = fresh[i] && dur > 0 ? Math.max(0.15, ease(Math.min(1, (performance.now() - t0) / dur))) : 1
+      if (flow?.dropArm?.has(i)) fade *= 0.48
       ctx.globalAlpha = fade
       if (n.diff && n.kind !== K_STEM && n.kind !== K_FORK) {
         ctx.fillStyle = C.err
@@ -1502,37 +1545,63 @@
       }
       ctx.globalAlpha = 1
     }
-    if (flow)
-      for (const [i, how] of flow.land) {
-        const x = curX[i]
-        const y = curY[i]
-        ctx.strokeStyle = flowCol
-        ctx.fillStyle = flowCol
-        ctx.lineWidth = 2
-        if (how === 'drop') {
-          // K throws the argument away here
-          ctx.beginPath()
-          ctx.moveTo(x + 9, y - 19)
-          ctx.lineTo(x + 17, y - 11)
-          ctx.moveTo(x + 17, y - 19)
-          ctx.lineTo(x + 9, y - 11)
-          ctx.stroke()
-          continue
-        }
-        ctx.setLineDash(how === 'looks' ? [3, 3] : [])
+    if (flow) {
+      if (flow.dropRoot != null && flow.keepRoot != null) {
+        // Direct K redex hover: mark the dropped right arm with a red ✕ badge and ring the kept payload
+        const dx = curX[flow.dropRoot]
+        const dy = curY[flow.dropRoot]
+        ctx.fillStyle = C.err
         ctx.beginPath()
-        ctx.arc(x, y, 16, 0, Math.PI * 2)
-        ctx.stroke()
-        ctx.setLineDash([])
-        const tag = how === 'looks' ? `${flow.label}?` : flow.label
-        ctx.font = "italic 700 12px Georgia, serif"
-        const tw = ctx.measureText(tag).width + 8
-        ctx.beginPath()
-        ctx.roundRect(x + 10, y - 26, tw, 15, 7)
+        ctx.arc(dx + 14, dy - 14, 8, 0, Math.PI * 2)
         ctx.fill()
-        ctx.fillStyle = '#fff'
-        ctx.fillText(tag, x + 10 + tw / 2, y - 18)
-      }
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(dx + 10.5, dy - 17.5)
+        ctx.lineTo(dx + 17.5, dy - 10.5)
+        ctx.moveTo(dx + 17.5, dy - 17.5)
+        ctx.lineTo(dx + 10.5, dy - 10.5)
+        ctx.stroke()
+
+        const kx = curX[flow.keepRoot]
+        const ky = curY[flow.keepRoot]
+        ctx.strokeStyle = C.ok
+        ctx.lineWidth = 2.4
+        ctx.beginPath()
+        ctx.arc(kx, ky, 16, 0, Math.PI * 2)
+        ctx.stroke()
+      } else
+        for (const [i, how] of flow.land) {
+          const x = curX[i]
+          const y = curY[i]
+          ctx.strokeStyle = flowCol
+          ctx.fillStyle = flowCol
+          ctx.lineWidth = 2
+          if (how === 'drop') {
+            // K throws its next argument away here
+            ctx.beginPath()
+            ctx.moveTo(x + 9, y - 19)
+            ctx.lineTo(x + 17, y - 11)
+            ctx.moveTo(x + 17, y - 19)
+            ctx.lineTo(x + 9, y - 11)
+            ctx.stroke()
+            continue
+          }
+          ctx.setLineDash(how === 'looks' ? [3, 3] : [])
+          ctx.beginPath()
+          ctx.arc(x, y, 16, 0, Math.PI * 2)
+          ctx.stroke()
+          ctx.setLineDash([])
+          const tag = how === 'looks' ? `${flow.label}?` : flow.label
+          ctx.font = "italic 700 12px Georgia, serif"
+          const tw = ctx.measureText(tag).width + 8
+          ctx.beginPath()
+          ctx.roundRect(x + 10, y - 26, tw, 15, 7)
+          ctx.fill()
+          ctx.fillStyle = '#fff'
+          ctx.fillText(tag, x + 10 + tw / 2, y - 18)
+        }
+    }
     tagBoxes = []
     if (showText) {
       for (let i = 0; i < nodes.length; i++) {

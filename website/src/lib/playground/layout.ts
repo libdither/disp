@@ -276,7 +276,8 @@ function layoutOnce(store: Store, roots: Id[], folds: FoldState, opts: LayoutOpt
         n.tagKind = reading?.kind ?? 'anon'
       }
       if (opened[i] || (!isRoot && folds.open.has(id))) n.opened = true
-      const comb = comb0
+      // Data shapes (numerals/strings) start with a left leaf too — don't misread them as K combinators
+      const comb = reading?.kind === 'nat' || reading?.kind === 'str' ? null : comb0
       if (comb) {
         n.comb = comb.op
         n.group = i
