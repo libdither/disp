@@ -323,10 +323,15 @@ export function ghostAt(tw: Tween, j: number, t: number, curX: ArrayLike<number>
   }
   // waiting to be knocked off; from the knock on it falls on its own clock (see knockedOff and fallAt)
   if (g.hit >= 0) return { x: g.x, y: g.y, a: 0.9, scale: 1 }
+  if (g.drop && g.to < 0) {
+    // K drops its unused argument: accelerate downward and slightly outward so the severed branch clearly falls away
+    const a = p < 0.55 ? 1 : Math.max(0, 1 - (p - 0.55) / 0.45)
+    return { x: g.x + 24 * p, y: g.y + 130 * p * p, a: a * 0.9, scale: 1 - 0.14 * p }
+  }
   const tx = g.to >= 0 ? curX[g.to] : g.x
-  const ty = g.to >= 0 ? curY[g.to] : g.y + (g.drop ? 46 : 0)
+  const ty = g.to >= 0 ? curY[g.to] : g.y
   // what merges into a new node stays visible until it gets there; the rest just fades
-  const a = g.quick ? Math.max(0, 1 - p / 0.4) : g.to >= 0 ? (p < 0.5 ? 1 : 1 - (p - 0.5) / 0.5) : g.drop ? 1 - p * p : 1 - e
+  const a = g.quick ? Math.max(0, 1 - p / 0.4) : g.to >= 0 ? (p < 0.5 ? 1 : 1 - (p - 0.5) / 0.5) : 1 - e
   return { x: g.x + (tx - g.x) * e, y: g.y + (ty - g.y) * e, a: a * 0.9, scale: g.to >= 0 ? 1 - 0.3 * e : 1 }
 }
 
