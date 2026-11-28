@@ -24,7 +24,7 @@ export interface VNode {
   side: number // which child of its parent
   kind: number
   text: string | null
-  podKind: LabelKind | 'anon' | 'same' | null
+  podKind: LabelKind | 'comb' | 'anon' | 'same' | null
   rule: number
   next: boolean
   diff: boolean
@@ -34,8 +34,10 @@ export interface VNode {
   group: number
   /// an application inside a binder still in place: it can't run until the binder is gone
   held?: boolean
-  /// a named subtree drawn open: its name, on a tag that folds it back when clicked
+  /// a subtree with a reading drawn open: its label, on a tag that folds it back when clicked
   tag?: string
+  /// the kind of reading on `tag`, so the canvas can colour nat / str / comb / name tags cleanly
+  tagKind?: LabelKind | 'comb' | 'anon'
   /// inside a fold someone opened: drawn with a soft halo, so it shows what they uncovered
   opened?: boolean
 }
@@ -105,6 +107,10 @@ export interface LayoutOptions {
   foldKeys?: Set<string>
   /// subtrees drawn open in the previous frame: they stay open rather than fold back while you look
   stay?: Set<Id>
+  /// subtrees drawn collapsed as pills in the previous frame: keep them collapsed across steps (continuity, even at the root)
+  wasPod?: Set<Id>
+  /// allow a finished data value (nat / str) at the root of a multi-step run to render as its collapsed pill
+  foldRootData?: boolean
 }
 
 /// how many X_UNITs a name's pill needs
@@ -204,15 +210,28 @@ function layoutOnce(store: Store, roots: Id[], folds: FoldState, opts: LayoutOpt
       if (n.key === nextKey || alsoKeys.has(n.key)) n.next = true
       const isRoot = n.parent < 0
       const inside = n.group >= 0
-      const label = inside ? null : store.label(id)
+      const comb0 = !inside && (opts.sk || t === HELD_K) ? store.readComb(id) : null
+      const rawLabel = inside ? null : store.label(id)
+      // something being called is code, even when its shape spells a number
+      const label = rawLabel && !(rawLabel.kind === 'nat' && (opts.plainNats || isHead(n))) ? rawLabel : null
+      // One uniform semantic reading per subtree: data/name first, or (with SK on) a 0-arg combinator (K, S, I)
+      const reading: { kind: LabelKind | 'comb'; text: string } | null =
+        label ?? (opts.sk && comb0 && comb0.kids.length === 0 ? { kind: 'comb', text: comb0.op } : null)
       let pod = false
       if (t === CUT) pod = true
       else if (inside) pod = false
       else if (opts.same?.has(id) && !(opts.diff?.has(n.key) ?? false)) pod = true
       else if (folds.closed.has(id)) pod = true
-      else if (folds.open.has(id) || isRoot || opts.reads?.has(id) || opts.stay?.has(id)) pod = false
-      else if (label && t !== APP && opts.labels !== false && !(label.kind === 'nat' && (opts.plainNats || isHead(n)))) pod = true
-      // the whole picture never folds into one pill, and a fold opened by hand opens far enough to answer what it is
+      else if (folds.open.has(id) || opts.reads?.has(id) || opts.stay?.has(id)) pod = false
+      else if (isRoot) {
+        const isData = reading != null && (reading.kind === 'nat' || reading.kind === 'str')
+        pod =
+          opts.labels !== false &&
+          t !== APP &&
+          reading != null &&
+          (!!opts.wasPod?.has(id) || (!!opts.foldRootData && isData))
+      } else if (reading && t !== APP && opts.labels !== false && reading.kind !== 'comb') pod = true
+      // the whole picture never folds anonymously, and a fold opened by hand opens far enough to answer what it is
       // and a picture small enough to take in whole folds no data at all
       const dataLimit = whole <= OPENED_DATA ? 0 : opened[i] ? Math.max(opts.foldData ?? 0, OPENED_DATA) : opts.foldData
       if (!pod && !inside && !isRoot && dataLimit && t !== APP && !store.hasApp(id) && store.size[id] > dataLimit && !opts.reads?.has(id)) {
@@ -232,13 +251,14 @@ function layoutOnce(store: Store, roots: Id[], folds: FoldState, opts: LayoutOpt
         const part = store.partOf(id)
         if (again) {
           n.podKind = 'same'
-          n.text = '= ' + (label?.text ?? (part ? part + '…' : '…' + fmtCount(store.size[id])))
+          n.text = '= ' + (reading?.text ?? (part ? part + '…' : '…' + fmtCount(store.size[id])))
         } else if (opts.same?.has(id) && !(opts.diff?.has(n.key) ?? false)) {
           n.podKind = 'same'
-          n.text = label?.text ?? `= ${fmtCount(store.size[id])}`
-        } else if (label) {
-          n.podKind = label.kind
-          n.text = label.text
+          n.text = reading?.text ?? `= ${fmtCount(store.size[id])}`
+        } else if (reading) {
+          n.podKind = reading.kind
+          n.text = reading.text
+          if (reading.kind === 'comb') n.comb = reading.text
         } else if (t === CUT) {
           n.podKind = 'anon'
           n.text = store.names.get(id) ?? '…'
@@ -249,9 +269,14 @@ function layoutOnce(store: Store, roots: Id[], folds: FoldState, opts: LayoutOpt
         width[i] = Math.max(1, Math.min(n.text.length, 28) * 0.28 + 0.5)
         continue
       }
-      if (!isRoot && !inside && ((label?.kind === 'name' && t !== APP) || folds.open.has(id))) n.tag = label?.text ?? (store.partOf(id) ? store.partOf(id) + '…' : '…' + fmtCount(store.size[id]))
+      // Uniform affordance: any expanded non-leaf subtree with a reading (nat, str, name, or 0-arg comb),
+      // or manually opened by the user, wears its clickable collapse tag — including at the root.
+      if (!inside && t !== APP && t !== LAM && ((reading && opts.labels !== false) || folds.open.has(id))) {
+        n.tag = reading?.text ?? (store.partOf(id) ? store.partOf(id) + '…' : '…' + fmtCount(store.size[id]))
+        n.tagKind = reading?.kind ?? 'anon'
+      }
       if (opened[i] || (!isRoot && folds.open.has(id))) n.opened = true
-      const comb = !inside && (opts.sk || t === HELD_K) ? store.readComb(id) : null
+      const comb = comb0
       if (comb) {
         n.comb = comb.op
         n.group = i
