@@ -38,6 +38,7 @@
   const LS_LESSON = 'disp-playground-lesson'
   const LS_DONE = 'disp-playground-completed'
   const LS_VERIFY = 'disp-playground-verify'
+  const LS_GUIDE_MIGRATED = 'disp-playground-guide-v1'
 
   // svelte-ignore non_reactive_update
   let editorApi: EditorApi | undefined
@@ -1026,6 +1027,7 @@
 
   onMount(() => {
     void (async () => {
+      let firstGuideVisit = false
       try {
         live = localStorage.getItem(LS_LIVE) !== '0'
         aboutOpen = false
@@ -1042,6 +1044,14 @@
         inspOpen = l.inspOpen ?? true
         inspW = l.inspW ?? 0.4
         sideTab = l.sideTab ?? 'guide'
+        firstGuideVisit = !localStorage.getItem(LS_GUIDE_MIGRATED)
+        if (firstGuideVisit) {
+          localStorage.setItem(LS_GUIDE_MIGRATED, '1')
+          sideOpen = true
+          sideTab = 'guide'
+          sideW = Math.max(sideW, 312)
+          persistLayout()
+        }
       } catch {}
       const hash = location.hash.slice(1)
       let loaded = false
@@ -1058,12 +1068,14 @@
       if (!loaded && wantedLesson && lessonById(wantedLesson)) {
         sideTab = 'guide'
         sideOpen = true
+        persistLayout()
         loadLesson(wantedLesson)
         loaded = true
       }
       const wanted = params.get('example')
       if (!loaded && wanted && examples.some((x) => x.id === wanted)) {
         sideTab = 'outline'
+        persistLayout()
         loadExample(wanted)
         loaded = true
       }
@@ -1072,16 +1084,19 @@
           const saved = localStorage.getItem(LS_DOC)
           const savedEx = localStorage.getItem(EXAMPLE_STORAGE_KEY)
           if (savedEx && examples.some((x) => x.id === savedEx)) exampleId = savedEx
-          if (saved) {
+          const isUneditedOldExample = firstGuideVisit && saved != null && examples.some((x) => x.source === saved)
+          if (saved && !isUneditedOldExample) {
             currentDoc = saved
             editorApi?.setDoc(saved)
           } else {
-            // Fresh visit: start straight in Track 1, Lesson 1 with the Guide open
+            // Fresh visit (or migrating from an unmodified old example): start straight in Track 1, Lesson 1
             const first = lessons[0]
             activeLessonId = first.id
             checkTypes = first.verifyTypes
             sideTab = 'guide'
             currentDoc = first.starter
+            editorApi?.setDoc(first.starter)
+            persist()
             const w0 = first.watches[0]
             if (w0 && 'lineMatch' in w0.target) pendingFocusMatch = w0.target.lineMatch
           }
