@@ -163,8 +163,8 @@
   const yRange = (s: Scene) => yRangeOf(s, up)
   const FRUIT = '#e79a3f'
   const combColor = (op: string | null) => (look === 'moss' ? garden().step : op === 'S' ? C.kw : op === 'K' ? C.warn : op === 'I' ? C.ok : C.err)
-  const podColor = (k: VNode['podKind']) =>
-    k === 'nat' ? C.num : k === 'str' ? C.str : k === 'name' ? C.name : k === 'same' ? C.edge : C.muted
+  const podColor = (k: VNode['podKind'], text?: string | null) =>
+    k === 'comb' ? combColor(text ?? null) : k === 'nat' ? C.num : k === 'str' ? C.str : k === 'name' ? C.name : k === 'same' ? C.edge : C.muted
 
   const textW = new Map<string, number>()
   function podWidth(text: string): number {
@@ -537,35 +537,46 @@
     ctx.stroke()
   }
 
-  /// a folded subtree as its name on a green pill, as a binder wears its name on a gold one
-  function drawNamePod(x: number, y: number, text: string, showText: boolean, lit = false) {
+  /// a folded subtree as its name on a coloured pill, as a binder wears its name on a gold one
+  function drawNamePod(x: number, y: number, text: string, showText: boolean, lit = false, col = C.g2) {
     const pw = podWidth(text) + 6
     ctx.beginPath()
     ctx.roundRect(x - pw / 2, y - 11, pw, 22, 11)
     ctx.fillStyle = C.bg
     ctx.fill()
     ctx.globalAlpha = fade * (lit ? 0.3 : 0.16)
-    ctx.fillStyle = C.g2
+    ctx.fillStyle = col
     ctx.fill()
     ctx.globalAlpha = fade
-    ctx.strokeStyle = C.g2
+    ctx.strokeStyle = col
     ctx.lineWidth = lit ? 2.4 : 1.3
     ctx.stroke()
     if (!showText) return
-    ctx.fillStyle = C.g2
+    ctx.fillStyle = col
     ctx.font = "700 11px 'JetBrains Mono Variable', monospace"
     ctx.fillText(text.length > 28 ? text.slice(0, 27) + '…' : text, x, y + 0.5)
   }
 
-  /// a named subtree drawn open wears its name on a small tag up and to its left; clicking the tag folds it
-  function drawTag(i: number, x: number, y: number, text: string, hot: boolean) {
+  /// an expanded subtree with a reading wears a small clickable tag up and to its left; clicking it folds the subtree
+  function drawTag(i: number, x: number, y: number, text: string, hot: boolean, kind?: VNode['tagKind']) {
     ctx.font = "600 10px 'JetBrains Mono Variable', monospace"
     const shown = text.length > 20 ? text.slice(0, 19) + '…' : text
     const w = ctx.measureText(shown).width + 10
     const h = 15
     const bx = x - 10 - w
     const by = y - 26
-    const col = up ? C.g2 : C.name
+    const col =
+      look === 'ink'
+        ? C.fg
+        : kind === 'comb'
+          ? combColor(text)
+          : kind === 'nat'
+            ? C.num
+            : kind === 'str'
+              ? C.str
+              : up
+                ? C.g2
+                : C.name
     ctx.strokeStyle = col
     ctx.lineWidth = 1
     ctx.globalAlpha = fade * 0.6
@@ -1417,12 +1428,12 @@
           break
         case K_POD: {
           const text = n.text ?? ''
+          const col = look === 'ink' ? C.fg : planty && !inStep[i] ? garden().ink : podColor(n.podKind, text)
           if (up) {
-            drawNamePod(x, y, text, showText, !!glow && glow === text)
+            drawNamePod(x, y, text, showText, !!glow && glow === text, n.podKind === 'comb' ? col : C.g2)
             break
           }
           const pw = podWidth(text)
-          const col = look === 'ink' ? C.fg : planty && !inStep[i] ? garden().ink : podColor(n.podKind)
           ctx.fillStyle = C.bg
           ctx.strokeStyle = col
           ctx.lineWidth = glow && glow === text ? 2.6 : look === 'ink' ? 1 : 1.3
@@ -1528,7 +1539,7 @@
         const n = nodes[i]
         if (!n.tag || !vis(curX[i], curY[i])) continue
         fade = fresh[i] && dur > 0 ? Math.max(0.15, ease(Math.min(1, (performance.now() - t0) / dur))) : 1
-        drawTag(i, curX[i], curY[i], n.tag, n === hover && hoverTag)
+        drawTag(i, curX[i], curY[i], n.tag, n === hover && hoverTag, n.tagKind)
       }
       fade = 1
     }

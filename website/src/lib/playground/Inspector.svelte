@@ -311,6 +311,7 @@
   function startTrace(root: Id) {
     bindScan = 0
     bindEndAt = -1
+    lastPods = new Set()
     trace = new Trace(store, root, mode)
     collapsed = new Set()
     playing = false
@@ -416,16 +417,18 @@
     } : undefined
   })
 
-  /// A finished value is data, so the S and K reading would only mislead.
+  /// A finished multi-step result is data, so the S and K reading would only mislead;
+  /// a static 0-step definition like `K := t(t)` still keeps its combinator reading (and data labels still win for numerals/strings).
   function readsSk(): boolean {
     if (!sk) return false
     if (!trace || trace.end !== 'normal' || at !== lead + trace.last || hasParams) return true
-    return trace.last === 0 && lead > 0
+    return trace.last === 0
   }
 
   /// the frame drawn last, so a single step forward can be drawn with its guide
   let drawnAt = -1
   let lastNearOpen = new Set<Id>()
+  let lastPods = new Set<Id>()
   /// how far the frames of a short finished run reach from their root, so the view can hold one zoom for all of them
   let reachKey = ''
   let reach: Scene['reach'] = undefined
@@ -438,7 +441,8 @@
     let nodes = 0
     function* scenes() {
       for (const [k, f] of trace!.frames.entries()) {
-        const sc = layoutScene(store, [f], { open: new Set(open), closed: new Set(closed) }, { labels, sk, foldData: labels ? 40 : undefined, plainNats: tab === 'try' && symbols.length > 0 && !tour, reads: reads(k), repeats: repeats() })
+        const foldRootData = k > 0 && k === trace!.last && trace!.end === 'normal'
+        const sc = layoutScene(store, [f], { open: new Set(open), closed: new Set(closed) }, { labels, sk, foldData: labels ? 40 : undefined, plainNats: tab === 'try' && symbols.length > 0 && !tour, reads: reads(k), repeats: repeats(), foldRootData })
         if ((nodes += sc.nodes.length) > 150_000) return
         yield sc
       }
@@ -471,8 +475,11 @@
     }
     const root = trace.frames[frame]
     const keepOpen = ms > 0 && at > was && at - was <= 4 ? lastNearOpen : undefined
-    const next = layoutScene(store, [root], { open, closed }, { nextPath: trace.nextPath(root), alsoNext: mode === 'parallel' ? trace.readyPaths(root) : undefined, labels, sk: readsSk(), foldData: labels ? 40 : undefined, keepOpen, plainNats: tab === 'try' && symbols.length > 0 && !tour, reads: reads(frame), repeats: repeats() })
+    const wasPod = was >= lead && at > was && at - was <= 4 ? lastPods : undefined
+    const foldRootData = frame > 0 && frame === trace.last && trace.end === 'normal'
+    const next = layoutScene(store, [root], { open, closed }, { nextPath: trace.nextPath(root), alsoNext: mode === 'parallel' ? trace.readyPaths(root) : undefined, labels, sk: readsSk(), foldData: labels ? 40 : undefined, keepOpen, plainNats: tab === 'try' && symbols.length > 0 && !tour, reads: reads(frame), repeats: repeats(), wasPod, foldRootData })
     lastNearOpen = next.nearOpen
+    lastPods = new Set(next.nodes.filter((n) => n.kind === K_POD).map((n) => n.id))
     if (ms > 0 && was >= lead && at > was && at - was <= 4) next.guide = stepGuide(store, trace, was - lead)
     next.reach = runReach()
     show(next)
@@ -777,7 +784,7 @@
       return
     }
     const copies = scene ? scene.nodes.filter((m) => m.id === n.id).length : 1
-    const head = n.kind === K_POD ? (n.text ?? '') : kindWord(n)
+    const head = n.kind === K_POD ? (n.podKind === 'comb' ? combWord(n) : (n.text ?? '')) : kindWord(n)
     const fires = !peek && (unified ? n.kind === K_APP || n.kind === K_LAM : n.kind === K_APP && !inBinders)
     const hint = n.kind === K_POD ? 'click to open' : n.held ? '' : fires ? (n.kind === K_LAM ? 'click to remove' : 'click to fire') : ''
     hoverText = [head, size > 1 ? `${fmt(size)} nodes` : '', copies > 1 ? `${copies} copies here, all one shared tree` : '', hint].filter(Boolean).join(' · ')
