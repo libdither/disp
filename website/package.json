@@ -11,6 +11,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "snapshot": "tsx scripts/build-kernel-snapshot.mts",
     "validate:examples": "tsx scripts/validate-examples.mts",
+    "validate:curriculum": "tsx scripts/validate-curriculum.mts",
     "film": "node scripts/playground-film.mjs",
     "tour-check": "tsx scripts/tour-check.mts",
     "vfs-check": "tsx scripts/vfs-check.mts",
